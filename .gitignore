@@ -5,9 +5,9 @@ bin/
 *.a
 *.so
 *.out
-kuda_means_cpu
-kuda_means_gpu
-kuda_means_*
+/kuda_means_cpu
+/kuda_means_gpu
+/kuda_means_*
 
 # Editor & IDE
 .vscode/

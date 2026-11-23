@@ -19,6 +19,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 SSH_HOST="${KUDA_MEANS_SSH_HOST:-kmutt-slurm-kuda}"
+# shellcheck disable=SC2088  # Literal ~ is expanded on the remote SSH server
 REMOTE_DIR="~/kuda_means"
 
 usage() {

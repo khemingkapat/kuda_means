@@ -1,8 +1,8 @@
 #pragma once
 
-#include <cuda_runtime.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cuda_runtime.h>
 
 #define CHECK_CUDA(call)                                                                           \
     do {                                                                                           \

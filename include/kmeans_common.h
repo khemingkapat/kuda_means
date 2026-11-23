@@ -28,8 +28,8 @@ struct HardwareProvenance {
 };
 
 struct KMeansResult {
-    std::vector<int> assignments;  // Length N
-    std::vector<float> centroids;  // Length K * D (row-major)
+    std::vector<int> assignments; // Length N
+    std::vector<float> centroids; // Length K * D (row-major)
     int iterations = 0;
     double sse = 0.0;
     double kernel_ms = 0.0;
@@ -46,7 +46,8 @@ struct VerificationReport {
 
 // Deterministic Gaussian-blob dataset generator (flat row-major N x D)
 void generate_gaussian_blobs(int n_points, int dim, int k_clusters, uint32_t seed,
-                             std::vector<float> &points_out, std::vector<float> &init_centroids_out);
+                             std::vector<float> &points_out,
+                             std::vector<float> &init_centroids_out);
 
 // Compute within-cluster Sum of Squared Errors (SSE)
 double compute_sse(const std::vector<float> &points, const std::vector<float> &centroids,
@@ -57,4 +58,4 @@ VerificationReport verify_against_baseline(const KMeansResult &ref, const KMeans
                                            int n_points, int dim, int k_clusters,
                                            double centroid_tol = 1e-3, double sse_rel_tol = 1e-3);
 
-}  // namespace kuda
+} // namespace kuda

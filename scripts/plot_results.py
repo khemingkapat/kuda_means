@@ -38,7 +38,9 @@ def plot_scaling(df: pd.DataFrame, out_dir: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate IEEE-ready benchmark plots.")
     parser.add_argument("csv_path", type=Path, help="Path to benchmark CSV results")
-    parser.add_argument("--out", type=Path, default=Path("results/figures"), help="Output directory")
+    parser.add_argument(
+        "--out", type=Path, default=Path("results/figures"), help="Output directory"
+    )
     args = parser.parse_args()
 
     df = pd.read_csv(args.csv_path)
