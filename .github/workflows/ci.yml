@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build & static analysis tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ make clang-format cppcheck shellcheck
+
+      - name: Build CPU baseline
+        run: make cpu
+
+      - name: C++/CUDA formatting (clang-format)
+        run: |
+          FILES=$(find include src tests -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cuh' -o -name '*.cpp' -o -name '*.cu' \) 2>/dev/null || true)
+          if [ -n "$FILES" ]; then
+            clang-format --dry-run --Werror $FILES
+          else
+            echo "No C++/CUDA source files to format-check yet."
+          fi
+
+      - name: C++ static analysis (cppcheck)
+        run: |
+          FILES=$(find src/common src/cpu -type f -name '*.cpp' 2>/dev/null || true)
+          if [ -n "$FILES" ]; then
+            cppcheck --enable=warning,performance,portability --std=c++17 --error-exitcode=1 -I include $FILES
+          else
+            echo "No C++ source files to analyze with cppcheck yet."
+          fi
+
+      - name: Shell & Slurm script lint (bash -n + shellcheck)
+        run: |
+          for f in .agents/scripts/*.sh scripts/slurm/*.sbatch scripts/colab/*.sh; do
+            [ -f "$f" ] || continue
+            bash -n "$f"
+          done
+          shellcheck -S warning .agents/scripts/*.sh scripts/colab/*.sh
+
+      - name: Python lint & format (ruff)
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "check ."
+
+      - name: Python format check (ruff format)
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "format --check ."
+
+      - name: Validate benchmark JSON files
+        run: |
+          python3 - <<'EOF'
+          import json, pathlib, sys
+          bad = 0
+          for p in sorted(pathlib.Path("results").rglob("*.json")):
+              try:
+                  json.loads(p.read_text(encoding="utf-8"))
+                  print(f"OK: {p}")
+              except Exception as exc:
+                  print(f"INVALID JSON: {p}: {exc}", file=sys.stderr)
+                  bad += 1
+          sys.exit(1 if bad else 0)
+          EOF

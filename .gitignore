@@ -1,0 +1,46 @@
+# Build artifacts
+build/
+bin/
+*.o
+*.a
+*.so
+*.out
+kuda_means_cpu
+kuda_means_gpu
+kuda_means_*
+
+# Editor & IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+compile_commands.json
+.cache/
+
+# Environment
+.direnv/
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+
+# Logs & temporary outputs
+logs/*.log
+slurm-*.log
+*.tmp
+
+# Large profiler artifacts (track curated reports explicitly with git add -f if needed)
+profiles/*.ncu-rep
+profiles/*.nsys-rep
+profiles/*.sqlite
+profiles/*.qdrep
+
+# Generated large datasets
+data/*.bin
+data/*.csv
+
+# Local course reference PDFs (not tracked in repo)
+.references/
+docs/*.pdf
