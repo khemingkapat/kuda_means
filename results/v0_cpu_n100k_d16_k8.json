@@ -1,0 +1,29 @@
+{
+  "version": "cpu",
+  "config": {
+    "n_points": 100000,
+    "dim": 16,
+    "k_clusters": 8,
+    "max_iters": 50,
+    "epsilon": 9.99999975e-05,
+    "seed": 42,
+    "warmup_runs": 1,
+    "bench_runs": 5
+  },
+  "hardware": {
+    "gpu_name": "CPU (AMD EPYC 7313 16-Core Processor)",
+    "compute_cap": "none",
+    "sm_count": 0,
+    "global_mem_mb": 0.000000,
+    "cuda_version": "none",
+    "git_commit": "9bd90bf"
+  },
+  "metrics": {
+    "iterations": 50,
+    "sse": 8388364.263866,
+    "kernel_ms": 398.097308,
+    "e2e_ms": 398.097308,
+    "ms_per_iter": 7.961946
+  },
+  "verified": true
+}

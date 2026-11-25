@@ -18,8 +18,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y g++ make clang-format cppcheck shellcheck
 
-      - name: Build CPU baseline
-        run: make cpu
+      - name: Build and test CPU baseline
+        run: make cpu && make test
 
       - name: C++/CUDA formatting (clang-format)
         run: |
