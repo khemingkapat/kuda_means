@@ -8,13 +8,14 @@
 #   make clean                       Remove build outputs
 # ==============================================================================
 
-CXX       ?= g++
-NVCC      ?= nvcc
-ARCH      ?= sm_89
+CXX        ?= g++
+NVCC       ?= nvcc
+ARCH       ?= sm_89
 NVCC_CCBIN ?=
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
-CXXFLAGS  := -O3 -std=c++17 -Wall -Wextra -Iinclude
-NVCCFLAGS := -O3 -std=c++17 -arch=$(ARCH) -Iinclude --expt-relaxed-constexpr
+CXXFLAGS   := -O3 -std=c++17 -Wall -Wextra -Iinclude -DKUDA_GIT_COMMIT=\"$(GIT_COMMIT)\"
+NVCCFLAGS  := -O3 -std=c++17 -arch=$(ARCH) -Iinclude --expt-relaxed-constexpr -DKUDA_GPU_BUILD -DKUDA_GIT_COMMIT=\"$(GIT_COMMIT)\"
 
 ifneq ($(strip $(NVCC_CCBIN)),)
     NVCCFLAGS += -ccbin $(NVCC_CCBIN)
@@ -23,11 +24,12 @@ endif
 BUILD_DIR := build
 BIN_DIR   := bin
 
-COMMON_SRCS := $(wildcard src/common/*.cpp)
-CPU_SRCS    := $(wildcard src/cpu/*.cpp)
-GPU_SRCS    := $(wildcard src/v1_naive/*.cu src/v2_memory/*.cu src/v3_privatized/*.cu src/v4_matmul/*.cu src/v5_streaming/*.cu src/gpu/*.cu)
+COMMON_LIB_SRCS := $(filter-out src/common/main.cpp,$(wildcard src/common/*.cpp))
+COMMON_SRCS     := $(wildcard src/common/*.cpp)
+CPU_SRCS        := $(wildcard src/cpu/*.cpp)
+GPU_SRCS        := $(wildcard src/v1_naive/*.cu src/v2_memory/*.cu src/v3_privatized/*.cu src/v4_matmul/*.cu src/v5_streaming/*.cu src/gpu/*.cu)
 
-.PHONY: all cpu gpu clean dirs info
+.PHONY: all cpu gpu test clean dirs info
 
 all: cpu
 
@@ -58,6 +60,10 @@ gpu: dirs
 		$(NVCC) $(NVCCFLAGS) $(COMMON_SRCS) $(CPU_SRCS) $(GPU_SRCS) -o $(BIN_DIR)/kuda_means_gpu && \
 		echo "Built $(BIN_DIR)/kuda_means_gpu (arch=$(ARCH))"; \
 	fi
+
+test: dirs
+	$(CXX) $(CXXFLAGS) $(COMMON_LIB_SRCS) $(CPU_SRCS) tests/test_cpu_baseline.cpp -o $(BIN_DIR)/test_cpu_baseline
+	./$(BIN_DIR)/test_cpu_baseline
 
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)
