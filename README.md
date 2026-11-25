@@ -2,15 +2,20 @@
 
 **CPE 393 | GPU Programming Final Project (KMUTT)**
 
-Progressive, profiling-guided CUDA optimization of K-Means clustering—from a single-threaded C++ baseline to coalesced constant memory, shared-memory/warp-shuffle privatized reductions, tiled MatMul distance expansion, and multi-stream chunked execution.
+An honest, profiling-guided investigation of GPU K-Means clustering—exposing the bottlenecks of Lloyd's original algorithm, cataloging existing algorithmic and GPU optimizations alongside their failure modes, and measuring progressive CUDA kernels (V0–V5) across $(N, D, K)$ regimes to show **where each optimization wins and where it breaks down**.
+
+## Core Standards (Honesty & Traceability)
+- **Strict Citations:** Every algorithmic and literature claim maps to a verified entry in `docs/references.bib`.
+- **Verified Benchmarks:** Every reported runtime or speedup comes from a committed `results/*.json` file with `verified: true`, `git_commit`, and `HardwareProvenance` (results from different GPUs are never mixed).
+- **Automated Quality Gates:** Every PR must pass CI (`make cpu`, `make test`, `clang-format`, `cppcheck`, `ruff`, `shellcheck`, JSON validation) plus GPU dynamic checks (`compute-sanitizer`, `ncu`/`nsys`) for `src/v*` kernels.
 
 ## Team Members
-| Name | Student ID | Contributions |
+| Name | Student ID | Contributions *(tracked via merged PRs/Issues)* |
 | :--- | :--- | :--- |
-| Khem Ingkapat | 66070503408 | *(TBD)* |
-| Thanchoti Chanpetch | 66070503423 | *(TBD)* |
-| Patrik Stamm | 66070503440 | *(TBD)* |
-| Kritipoom Chanla | 66070503488 | *(TBD)* |
+| Khem Ingkapat | 66070503408 | *(Updated from merged PRs at M3 audit)* |
+| Thanchoti Chanpetch | 66070503423 | *(Updated from merged PRs at M3 audit)* |
+| Patrik Stamm | 66070503440 | *(Updated from merged PRs at M3 audit)* |
+| Kritipoom Chanla | 66070503488 | *(Updated from merged PRs at M3 audit)* |
 
 ## Optimization Stages
 1. **V0 — CPU Baseline (`src/cpu/`):** Single-threaded C++ reference implementation on a flat $N \times D$ float array.
@@ -70,11 +75,14 @@ colab-stop kuda-means
 uv run python scripts/plot_results.py results/benchmarks.csv
 ```
 
-## Team Workflow & CI Rules
-- **Branching:** Never push directly to `main`. Use feature/experiment branches (`feat/v1-naive`, `exp/v3-blocksize`, `fix/...`, `docs/...`) and open a Pull Request.
-- **Automated CI (`.github/workflows/ci.yml`):** Every PR automatically checks `make cpu`, `clang-format`, shell/sbatch syntax, Python syntax, and `results/*.json` validity.
-- **GPU PR Checklist:** PRs modifying `src/v*` must report in the PR description: GPU model & `sm_XX`, correctness vs. CPU baseline (assignments, centroids, SSE), `compute-sanitizer --tool memcheck` pass, and measured `kernel_ms` / `e2e_ms`.
-- **Data & Docs:** Store structured benchmark outputs in `results/*.json` and Markdown write-ups in `docs/*.md`. Keep course PDFs out of git (stored locally in `.references/`).
+## Team Workflow & Pull-Based Issue Queue
+We use a **pull-based GitHub Issue workflow** instead of rigid 4-way silos so no single teammate's schedule blocks the team:
+1. **Single-Function Sub-Issues:** Every unit of work is a focused GitHub Sub-Issue serving **one clear function** (e.g., implement one kernel, capture one `ncu` profile, write one citation file), grouped under **Parent Issues** (`epic`) and **3 Milestones** (`M1: Foundation & Literature`, `M2: GPU Optimizations & Tooling`, `M3: Synthesis, Report & Audit`).
+2. **Claim & Work:** Whenever you have time, pick an open, unblocked sub-issue from the current milestone, **assign yourself**, and create a feature branch (`feat/...`, `exp/...`, `docs/...`, `fix/...`). Never push directly to `main`.
+3. **Verify & PR:** Satisfy every checkbox in the issue's Acceptance Criteria, open a Pull Request referencing `Closes #<issue_number>`, and wait for CI + human review.
+- **Automated CI (`.github/workflows/ci.yml`):** Checks `make cpu`, `make test`, `clang-format`, `cppcheck`, `ruff`, `shellcheck`, and `results/*.json` validity on every PR.
+- **GPU PR Checklist:** PRs modifying `src/v*` must report in the PR description: GPU model & `sm_XX`, correctness vs. CPU baseline (assignments, centroids, SSE), `compute-sanitizer` pass (`memcheck`, plus `racecheck`/`synccheck` for shared-memory kernels), and measured `kernel_ms` / `e2e_ms`.
+- **Data & Docs:** Store structured benchmark outputs in `results/*.json`, profiler text summaries in `profiles/*.txt`, and cited Markdown write-ups in `docs/*.md`. Keep course/reference PDFs out of git (stored locally in `.references/`).
 
 ## Repository Layout
 ```

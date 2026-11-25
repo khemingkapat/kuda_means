@@ -4,8 +4,10 @@ This repository is developed collaboratively by a 4-person team (Khem, Thanchoti
 
 ---
 
-## 1. Branching & Pull Request Policy
+## 1. Pull-Based Issue Queue, Branching & Pull Request Policy
 
+- **Pull-Based Single-Function Issues:** Work is tracked as atomic, single-function **GitHub Sub-Issues** grouped under **Parent Epics** (`epic`) and **Milestones** (`M1`–`M3`). Do not split work into rigid personal silos; any available teammate assigns themselves to the next unblocked sub-issue, completes its exact acceptance criteria, and closes it via a linked PR (`Closes #<issue>`).
+- **Honesty & Traceability:** Every literature claim must cite a verified BibTeX entry (`docs/references.bib`), and every reported benchmark/profiler number must map verbatim to a committed `results/*.json` or `profiles/*.txt` artifact with `git_commit` and `HardwareProvenance`.
 - **Never push directly to `main`.** Keep `main` always buildable and passing CI.
 - **Branch Naming:**
   - Feature / kernel stage: `feat/v0-cpu-baseline`, `feat/v1-naive`, `feat/v2-memory`, `feat/v3-privatized`, `feat/v4-matmul`, `feat/v5-streaming`
