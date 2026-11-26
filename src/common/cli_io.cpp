@@ -131,6 +131,7 @@ void print_usage(const char *prog_name) {
               << "  --warmup <int>         Warmup runs >= 0 (default: 1)\n"
               << "  --runs <int>           Timed benchmark runs >= 1 (default: 5)\n"
               << "  --version <str>        Implementation version (default: cpu)\n"
+              << "  --no-verify            Skip V0 CPU verification on GPU runs\n"
               << "  --git-commit <str>     Override git commit provenance string\n"
               << "  --json <path>          Write structured JSON result to <path>\n"
               << "  --csv <path>           Append CSV row to <path>\n"
@@ -204,6 +205,8 @@ CliParseStatus parse_cli_args(int argc, char **argv, KMeansConfig &cfg) {
             if (!v)
                 return CliParseStatus::Error;
             cfg.version = v;
+        } else if (arg == "--no-verify") {
+            cfg.verify = false;
         } else if (arg == "--git-commit") {
             const char *v = need_val(arg);
             if (!v)
