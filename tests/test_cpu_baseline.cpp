@@ -124,6 +124,15 @@ int main() {
         char *argv_junk[] = {p, n_flag, junk};
         all_ok &= check(kuda::parse_cli_args(3, argv_junk, c) == kuda::CliParseStatus::Error,
                         "CLI: trailing garbage in -n rejected");
+
+        kuda::KMeansConfig c_verify;
+        all_ok &= check(c_verify.verify, "CLI: verify defaults to true");
+
+        char no_verify[] = "--no-verify";
+        char *argv_nv[] = {p, no_verify};
+        all_ok &= check(kuda::parse_cli_args(2, argv_nv, c_verify) == kuda::CliParseStatus::Ok &&
+                            !c_verify.verify,
+                        "CLI: --no-verify disables verification");
     }
 
     // Test 7: JSON & CSV provenance output (git_commit, verified default, N column)

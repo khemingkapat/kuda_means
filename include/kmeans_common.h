@@ -25,6 +25,7 @@ struct KMeansConfig {
     uint32_t seed = 42;
     int warmup_runs = 1;
     int bench_runs = 5;
+    bool verify = true;
     std::string version = "cpu";
     std::string csv_out = "";
     std::string json_out = "";
