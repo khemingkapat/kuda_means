@@ -49,7 +49,13 @@ Always use `./.agents/scripts/slurm_ctl.sh` (or `slurm-ctl` in `nix develop`):
 
 # 7. Cancel a specific numeric job ID
 ./.agents/scripts/slurm_ctl.sh cancel <job_id>
+
+# 8. Check or release the local flock/lease lock (automatically acquired on sync/submit/profile/fetch)
+./.agents/scripts/slurm_ctl.sh lock-status
+./.agents/scripts/slurm_ctl.sh unlock
 ```
+
+> **Parallel Worktree Lock (`flock` + Lease):** `slurm_ctl.sh` automatically serializes `sync`, `submit`, `profile`, and `fetch` through `./.agents/scripts/gpu_lock.sh` so two worktrees cannot overwrite `~/kuda_means` or submit concurrently using the same SSH key. Release the lease with `./.agents/scripts/slurm_ctl.sh unlock` once your job finishes and results are fetched.
 
 ### Security & Login Node Guardrails
 1. **One-Time Setup:** The user runs `./.agents/scripts/setup_slurm_ssh.sh` once manually to install `~/.ssh/id_ed25519_kuda_means`, `Host kmutt-slurm-kuda`, and `~/bin/kuda_means_gatekeeper.sh`. Agents must **never** modify `~/.ssh/*` or touch `Host kmutt-slurm-agent` (reserved for `kv_bench`).
@@ -64,6 +70,9 @@ Always use `./.agents/scripts/slurm_ctl.sh` (or `slurm-ctl` in `nix develop`):
 Only use **after the user approves switching to Colab** (e.g., when `sinfo` shows all cluster GPUs are occupied):
 
 ```bash
+# 0. Acquire local Colab lock so parallel worktrees cannot spawn two Colab sessions
+./.agents/scripts/gpu_lock.sh acquire colab --note "T4 kuda-means"
+
 # 1. Start GPU runtime
 colab-start T4 kuda-means
 
@@ -73,8 +82,9 @@ colab-run-project -- --version v1 -n 100000 -d 32 -k 16
 # Or submit a standalone single .cu file
 colab-submit src/v1_naive/test_single.cu -a sm_75 -- --runs 5
 
-# 3. Always release GPU compute units when done
+# 3. Always release GPU compute units and the local lock when done
 colab-stop kuda-means
+./.agents/scripts/gpu_lock.sh release colab
 ```
 
 ---

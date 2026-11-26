@@ -93,16 +93,33 @@
         export LD_LIBRARY_PATH="${libPath}:''${LD_LIBRARY_PATH:-}"
         GPU="''${1:-T4}"
         SESSION="''${2:-kuda-means}"
+        REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        GPU_LOCK="$REPO_ROOT/.agents/scripts/gpu_lock.sh"
         echo "==> Starting Colab session '$SESSION' (GPU: $GPU)..."
-        colab new -s "$SESSION" --gpu "$GPU"
+        if [ -x "$GPU_LOCK" ]; then
+          exec "$GPU_LOCK" run colab --note "colab-start $GPU $SESSION" -- colab new -s "$SESSION" --gpu "$GPU"
+        else
+          colab new -s "$SESSION" --gpu "$GPU"
+        fi
       '';
 
       colab-stop = pkgs.writeShellScriptBin "colab-stop" ''
         export PATH="$HOME/.local/bin:$PATH"
         export LD_LIBRARY_PATH="${libPath}:''${LD_LIBRARY_PATH:-}"
         SESSION="''${1:-kuda-means}"
+        REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        GPU_LOCK="$REPO_ROOT/.agents/scripts/gpu_lock.sh"
         echo "==> Stopping Colab session '$SESSION'..."
-        colab stop -s "$SESSION"
+        if [ -x "$GPU_LOCK" ]; then
+          "$GPU_LOCK" run colab --note "colab-stop $SESSION" -- colab stop -s "$SESSION"
+          STATUS=$?
+          if [ "$STATUS" -eq 0 ]; then
+            "$GPU_LOCK" release colab || true
+          fi
+          exit $STATUS
+        else
+          colab stop -s "$SESSION"
+        fi
       '';
 
       colab-status = pkgs.writeShellScriptBin "colab-status" ''
@@ -132,8 +149,14 @@
         fi
         FILENAME="$(basename "$SRC")"
         DEST="''${2:-/content/$FILENAME}"
+        REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        GPU_LOCK="$REPO_ROOT/.agents/scripts/gpu_lock.sh"
         echo "==> Uploading $SRC -> Colab:$DEST..."
-        exec colab upload "$SRC" "$DEST"
+        if [ -x "$GPU_LOCK" ]; then
+          exec "$GPU_LOCK" run colab --note "colab-push $FILENAME" -- colab upload "$SRC" "$DEST"
+        else
+          exec colab upload "$SRC" "$DEST"
+        fi
       '';
 
       colab-launcher-gen = pkgs.writeText "colab_launcher_gen.py" ''
@@ -225,8 +248,14 @@
         LAUNCHER="$(mktemp /tmp/colab_launch_XXXXXX.py)"
         python3 "$GEN_SCRIPT" "$FILE" "$LAUNCHER" "$REMOTE_SRC" "$REMOTE_BIN" "$ARCH" "''${EXTRA_ARGS[@]}"
 
+        REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        GPU_LOCK="$REPO_ROOT/.agents/scripts/gpu_lock.sh"
         echo "==> colab-submit: $FILE (arch=$ARCH) -> session '$SESSION'"
-        colab exec -s "$SESSION" -f "$LAUNCHER" --timeout "$TIMEOUT"
+        if [ -x "$GPU_LOCK" ]; then
+          "$GPU_LOCK" run colab --note "colab-submit $FILE ($SESSION)" -- colab exec -s "$SESSION" -f "$LAUNCHER" --timeout "$TIMEOUT"
+        else
+          colab exec -s "$SESSION" -f "$LAUNCHER" --timeout "$TIMEOUT"
+        fi
         STATUS=$?
         rm -f "$LAUNCHER"
         exit $STATUS

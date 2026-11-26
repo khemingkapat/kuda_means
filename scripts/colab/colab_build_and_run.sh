@@ -12,6 +12,11 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+GPU_LOCK="${REPO_ROOT}/.agents/scripts/gpu_lock.sh"
+if [[ "${KUDA_MEANS_LOCK_HELD_COLAB:-0}" != "1" && -x "$GPU_LOCK" ]]; then
+    SELF_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    exec "$GPU_LOCK" run colab --note "colab_build_and_run" -- "$SELF_PATH" "$@"
+fi
 ARCH="sm_75"
 SESSION="kuda-means"
 TIMEOUT="3600"

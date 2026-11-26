@@ -97,17 +97,18 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_claim(args: argparse.Namespace) -> int:
-    dirty = check_working_tree()
-    if dirty and not args.allow_dirty:
-        print("ERROR: Working tree has uncommitted changes:", file=sys.stderr)
-        for line in dirty:
-            print(f"  {line}", file=sys.stderr)
-        print("Commit/stash changes first, or pass --allow-dirty.", file=sys.stderr)
-        return 1
+    in_place_checkout = not args.no_checkout and not args.worktree
+    if in_place_checkout:
+        dirty = check_working_tree()
+        if dirty and not args.allow_dirty:
+            print("ERROR: Working tree has uncommitted changes:", file=sys.stderr)
+            for line in dirty:
+                print(f"  {line}", file=sys.stderr)
+            print("Commit/stash changes first, or pass --allow-dirty.", file=sys.stderr)
+            return 1
 
     default_branch = get_default_branch()
     run_cmd(["git", "fetch", "origin"])
-    run_cmd(["gh", "issue", "edit", str(args.number), "--add-assignee", "@me"])
 
     branch_exists = (
         run_cmd(
@@ -116,12 +117,45 @@ def cmd_claim(args: argparse.Namespace) -> int:
         ).returncode
         == 0
     )
-    if branch_exists:
-        run_cmd(["git", "checkout", args.branch])
-        action = f"Switched to existing branch '{args.branch}'"
+
+    if args.no_checkout:
+        if branch_exists:
+            action = f"Branch '{args.branch}' already exists (left working tree untouched)"
+        else:
+            run_cmd(["git", "branch", args.branch, f"origin/{default_branch}"])
+            action = (
+                f"Created branch '{args.branch}' from origin/{default_branch} (without checkout)"
+            )
+    elif args.worktree:
+        if branch_exists:
+            run_cmd(["git", "worktree", "add", args.worktree, args.branch])
+            action = f"Added worktree at '{args.worktree}' for existing branch '{args.branch}'"
+        else:
+            run_cmd(
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "-b",
+                    args.branch,
+                    args.worktree,
+                    f"origin/{default_branch}",
+                ]
+            )
+            action = (
+                f"Created branch '{args.branch}' from origin/{default_branch} "
+                f"in worktree '{args.worktree}'"
+            )
     else:
-        run_cmd(["git", "checkout", "-b", args.branch, f"origin/{default_branch}"])
-        action = f"Created and switched to '{args.branch}' from origin/{default_branch}"
+        if branch_exists:
+            run_cmd(["git", "checkout", args.branch])
+            action = f"Switched to existing branch '{args.branch}'"
+        else:
+            run_cmd(["git", "checkout", "-b", args.branch, f"origin/{default_branch}"])
+            action = f"Created and switched to '{args.branch}' from origin/{default_branch}"
+
+    # Assign on GitHub only after local branch/worktree setup succeeds
+    run_cmd(["gh", "issue", "edit", str(args.number), "--add-assignee", "@me"])
 
     print(f"Claimed issue #{args.number} (@me). {action}.")
     return 0
@@ -144,6 +178,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_claim.add_argument("branch", help="Feature branch name to create or switch to.")
     p_claim.add_argument(
         "--allow-dirty", action="store_true", help="Allow running with uncommitted changes."
+    )
+    mode = p_claim.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--no-checkout",
+        action="store_true",
+        help="Assign issue and create branch ref without modifying the current working tree.",
+    )
+    mode.add_argument(
+        "--worktree",
+        metavar="PATH",
+        help="Assign issue and create a new git worktree at PATH for the branch.",
     )
     p_claim.set_defaults(func=cmd_claim)
 
