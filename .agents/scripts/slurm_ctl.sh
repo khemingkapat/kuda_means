@@ -16,6 +16,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GPU_LOCK="${SCRIPT_DIR}/gpu_lock.sh"
 cd "$REPO_ROOT"
 
 SSH_HOST="${KUDA_MEANS_SSH_HOST:-kmutt-slurm-kuda}"
@@ -42,6 +44,8 @@ Commands:
   logs <job_id> [lines]               View last N lines of slurm-<job_id>.log (default: 80)
   fetch [job_id]                      Pull results/, profiles/*.txt, and logs/slurm-*.log from cluster
   cancel <job_id>                     Cancel a specific numeric Slurm job ID
+  lock-status                         Show local Slurm/Colab GPU lock status
+  unlock [--force]                    Release local Slurm GPU lock after job completes
 EOF
 }
 
@@ -185,7 +189,11 @@ cmd_submit() {
     echo "$submit_out"
 
     if [[ "$submit_out" =~ Submitted[[:space:]]batch[[:space:]]job[[:space:]]+([0-9]+) ]]; then
-        echo "JOB_ID=${BASH_REMATCH[1]}"
+        local job_id="${BASH_REMATCH[1]}"
+        echo "JOB_ID=${job_id}"
+        if [[ -x "$GPU_LOCK" ]]; then
+            "$GPU_LOCK" set-job slurm "$job_id"
+        fi
     fi
 }
 
@@ -220,7 +228,11 @@ cmd_profile() {
     echo "$submit_out"
 
     if [[ "$submit_out" =~ Submitted[[:space:]]batch[[:space:]]job[[:space:]]+([0-9]+) ]]; then
-        echo "JOB_ID=${BASH_REMATCH[1]}"
+        local job_id="${BASH_REMATCH[1]}"
+        echo "JOB_ID=${job_id}"
+        if [[ -x "$GPU_LOCK" ]]; then
+            "$GPU_LOCK" set-job slurm "$job_id"
+        fi
     fi
 }
 
@@ -300,6 +312,9 @@ cmd_cancel() {
     echo ">> Cancelling Slurm job ${job_id} on ${SSH_HOST}..."
     ssh "$SSH_HOST" "scancel ${job_id}"
     echo ">> Cancelled job ${job_id}."
+    if [[ -x "$GPU_LOCK" ]]; then
+        "$GPU_LOCK" release slurm >/dev/null 2>&1 || true
+    fi
 }
 
 SUBCOMMAND="${1:-}"
@@ -309,15 +324,37 @@ if [[ -z "$SUBCOMMAND" ]]; then
 fi
 shift
 
+# Serialize mutating cluster operations across parallel worktrees using flock + lease
 case "$SUBCOMMAND" in
-    nodes)      cmd_nodes "$@" ;;
-    sync)       cmd_sync "$@" ;;
-    submit)     cmd_submit "$@" ;;
-    profile)    cmd_profile "$@" ;;
-    status)     cmd_status "$@" ;;
-    logs)       cmd_logs "$@" ;;
-    fetch)      cmd_fetch "$@" ;;
-    cancel)     cmd_cancel "$@" ;;
+    sync|submit|profile|fetch)
+        if [[ "${KUDA_MEANS_LOCK_HELD_SLURM:-0}" != "1" && -x "$GPU_LOCK" ]]; then
+            LOCK_EXTRA=()
+            if [[ "$SUBCOMMAND" == "sync" ]]; then
+                for arg in "$@"; do
+                    if [[ "$arg" == "--dry-run" ]]; then
+                        LOCK_EXTRA+=("--ephemeral")
+                        break
+                    fi
+                done
+            fi
+            SELF_PATH="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
+            exec "$GPU_LOCK" run slurm "${LOCK_EXTRA[@]}" \
+                --note "slurm_ctl ${SUBCOMMAND}" -- "$SELF_PATH" "$SUBCOMMAND" "$@"
+        fi
+        ;;
+esac
+
+case "$SUBCOMMAND" in
+    nodes)       cmd_nodes "$@" ;;
+    sync)        cmd_sync "$@" ;;
+    submit)      cmd_submit "$@" ;;
+    profile)     cmd_profile "$@" ;;
+    status)      cmd_status "$@" ;;
+    logs)        cmd_logs "$@" ;;
+    fetch)       cmd_fetch "$@" ;;
+    cancel)      cmd_cancel "$@" ;;
+    lock-status) "$GPU_LOCK" status "$@" ;;
+    unlock)      "$GPU_LOCK" release slurm "$@" ;;
     -h|--help|help) usage ;;
     *)
         echo "ERROR: Unknown command '${SUBCOMMAND}'" >&2
