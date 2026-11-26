@@ -72,7 +72,7 @@ colab-stop kuda-means
 
 ### 5. Verification & Plotting (Python via `uv`)
 ```bash
-uv run python scripts/plot_results.py results/benchmarks.csv
+uv run python scripts/plot_results.py results/ --out results/figures/
 ```
 
 ## Team Workflow & Pull-Based Issue Queue
