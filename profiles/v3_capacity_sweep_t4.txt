@@ -1,0 +1,55 @@
+# V3 shared-memory capacity sweep + FMA cross-check — raw console output
+# GPU: Tesla T4 (sm_75, 40 SMs, CUDA 13.0), Google Colab, binary built from main @ f9578a1
+#
+# Sweep command (D=32, N=1,000,000; V3 verified vs V0, V2 timed with --no-verify):
+#   for k in 16 64 128 190 252 253; do
+#     ./bin/kuda_means_gpu --version v3 -n 1000000 -d 32 -k $k --iters 10 --runs 3
+#     ./bin/kuda_means_gpu --version v2 -n 1000000 -d 32 -k $k --iters 10 --runs 3 --no-verify
+#   done
+
+== K=16
+[v3] reduction path: shared (smem=4160 B/block, limit=65536 B, grid=160 blocks, centroids=__constant__)
+[kuda_means] version=v3 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=16 iters=10 sse=142836462.5948 kernel_ms=70.4833 e2e_ms=99.8359 ms_per_iter=7.0483
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+[kuda_means] version=v2 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=16 iters=10 sse=142836462.5948 kernel_ms=74.8680 e2e_ms=106.2098 ms_per_iter=7.4868
+== K=64
+[v3] reduction path: shared (smem=16640 B/block, limit=65536 B, grid=120 blocks, centroids=__constant__)
+[kuda_means] version=v3 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=64 iters=10 sse=169499361.3139 kernel_ms=139.1690 e2e_ms=167.9584 ms_per_iter=13.9169
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+[kuda_means] version=v2 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=64 iters=10 sse=169499361.3139 kernel_ms=216.4830 e2e_ms=247.5505 ms_per_iter=21.6483
+== K=128
+[v3] reduction path: shared (smem=33280 B/block, limit=65536 B, grid=40 blocks, centroids=__constant__)
+[kuda_means] version=v3 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=128 iters=10 sse=181643980.1954 kernel_ms=237.2827 e2e_ms=269.9628 ms_per_iter=23.7283
+[verify] status=FAIL assignment_mismatches=56 max_centroid_abs_diff=7.808685e-03 sse_rel_diff=5.377790e-09
+[kuda_means] version=v2 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=128 iters=10 sse=181643980.1954 kernel_ms=451.0273 e2e_ms=480.6442 ms_per_iter=45.1027
+== K=190
+[v3] reduction path: shared (smem=49400 B/block, limit=65536 B, grid=40 blocks, centroids=__constant__)
+[kuda_means] version=v3 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=190 iters=10 sse=153331019.0917 kernel_ms=325.4332 e2e_ms=354.8517 ms_per_iter=32.5433
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+[kuda_means] version=v2 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=190 iters=10 sse=153331019.0917 kernel_ms=604.9611 e2e_ms=635.5491 ms_per_iter=60.4961
+== K=252
+[v3] reduction path: shared (smem=65520 B/block, limit=65536 B, grid=40 blocks, centroids=__constant__)
+[kuda_means] version=v3 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=252 iters=10 sse=155132786.4625 kernel_ms=417.8795 e2e_ms=447.6995 ms_per_iter=41.7880
+[verify] status=PASS assignment_mismatches=1 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=2.939260e-14
+[kuda_means] version=v2 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=252 iters=10 sse=155132786.4625 kernel_ms=769.3374 e2e_ms=800.9434 ms_per_iter=76.9337
+== K=253
+[v3] reduction path: global atomic fallback (need 65780 B/block > limit 65536 B, centroids=__constant__)
+[kuda_means] version=v3 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=253 iters=10 sse=175601455.0584 kernel_ms=767.5942 e2e_ms=798.0849 ms_per_iter=76.7594
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+[kuda_means] version=v2 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=253 iters=10 sse=175601455.0584 kernel_ms=718.1240 e2e_ms=747.7064 ms_per_iter=71.8124
+
+# K=128 cross-check: V2 and V1 with verification enabled (same default build)
+#   ./bin/kuda_means_gpu --version v2 -n 1000000 -d 32 -k 128 --iters 10 --runs 1
+#   ./bin/kuda_means_gpu --version v1 -n 1000000 -d 32 -k 128 --iters 10 --runs 1
+[kuda_means] version=v2 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=128 iters=10 sse=181643980.1954 kernel_ms=448.0367 e2e_ms=480.7907 ms_per_iter=44.8037
+[verify] status=FAIL assignment_mismatches=56 max_centroid_abs_diff=7.808685e-03 sse_rel_diff=5.377790e-09
+[kuda_means] version=v1 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=128 iters=10 sse=181643980.1954 kernel_ms=1502.9449 e2e_ms=1534.3119 ms_per_iter=150.2945
+[verify] status=FAIL assignment_mismatches=56 max_centroid_abs_diff=7.808685e-03 sse_rel_diff=5.377790e-09
+
+# K=128 FMA cross-check: rebuild with FMA contraction disabled, rerun V3
+#   make clean && make gpu ARCH=sm_75 NVCC="nvcc -fmad=false"
+#   ./bin/kuda_means_gpu --version v3 -n 1000000 -d 32 -k 128 --iters 10 --runs 1
+rm -rf build bin
+Built bin/kuda_means_gpu (arch=sm_75)
+[kuda_means] version=v3 hw="Tesla T4" commit=f9578a1 N=1000000 D=32 K=128 iters=10 sse=181643979.2185 kernel_ms=233.9429 e2e_ms=263.1075 ms_per_iter=23.3943
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
