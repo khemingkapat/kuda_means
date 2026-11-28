@@ -33,7 +33,8 @@ VERIFY_RE = re.compile(
     r"max_centroid_abs_diff=([0-9.eE+-]+)\s+sse_rel_diff=([0-9.eE+-]+)"
 )
 MODE_RE = re.compile(r"\[v4\]\s+distance:\s+gemm.*expansion=(shifted|full)")
-RERANK_RE = re.compile(r"\[v4\]\s+distance:\s+gemm.*exact_rerank=(top2|off)")
+RERANK_RE = re.compile(r"\[v4\]\s+distance:\s+gemm.*exact_rerank=(close_calls|all|off)")
+RERANK_COUNT_RE = re.compile(r"\[v4\]\s+exact re-rank \(final assignment pass\):\s+(\d+) of (\d+)")
 
 
 def _read_v4_source() -> str:
@@ -48,7 +49,7 @@ def _run_v4(
     k: int,
     max_iters: int,
     full_expansion: bool = False,
-    rerank: bool = True,
+    rerank: str = "1",
 ) -> subprocess.CompletedProcess[str]:
     args = [
         str(GPU_BIN),
@@ -69,7 +70,7 @@ def _run_v4(
     ]
     env = dict(os.environ)
     env["KUDA_V4_FULL_EXPANSION"] = "1" if full_expansion else "0"
-    env["KUDA_V4_EXACT_RERANK"] = "1" if rerank else "0"
+    env["KUDA_V4_EXACT_RERANK"] = rerank
     return subprocess.run(args, cwd=REPO_ROOT, capture_output=True, text=True, env=env)
 
 
@@ -93,6 +94,11 @@ def _expansion_mode(stderr: str) -> str | None:
 def _rerank_mode(stderr: str) -> str | None:
     match = RERANK_RE.search(stderr)
     return match.group(1) if match else None
+
+
+def _rerank_count(stderr: str) -> tuple[int, int] | None:
+    match = RERANK_COUNT_RE.search(stderr)
+    return (int(match.group(1)), int(match.group(2))) if match else None
 
 
 class TestV4MatMul(unittest.TestCase):
@@ -165,12 +171,16 @@ class TestV4MatMul(unittest.TestCase):
     # =========================================================================
 
     def test_ac2_small_regime_cpu_verification(self) -> None:
-        """AC2: N=100000, D=16, K=8, 50 iterations matches V0 (shifted + exact top-2 re-rank)."""
+        """AC2: N=100000, D=16, K=8, 50 iterations matches V0 (shifted + close-call re-rank)."""
         self._require_gpu()
         res = _run_v4(100000, 16, 8, 50)
         self._assert_verified(res)
         self.assertEqual(_expansion_mode(res.stderr), "shifted", res.stderr)
-        self.assertEqual(_rerank_mode(res.stderr), "top2", res.stderr)
+        self.assertEqual(_rerank_mode(res.stderr), "close_calls", res.stderr)
+        count = _rerank_count(res.stderr)
+        self.assertIsNotNone(count, res.stderr)
+        assert count is not None
+        self.assertLess(count[0], count[1], "Close-call filter should skip most points")
 
     # =========================================================================
     # AC3: Large regime + cancellation check
@@ -186,7 +196,7 @@ class TestV4MatMul(unittest.TestCase):
     def test_ac3_raw_gemm_reports_cancellation_mismatches(self) -> None:
         """AC3: With re-rank off, the raw GEMM ranking still runs and reports its mismatches."""
         self._require_gpu()
-        res = _run_v4(20000, 128, 64, 10, full_expansion=True, rerank=False)
+        res = _run_v4(20000, 128, 64, 10, full_expansion=True, rerank="0")
         self.assertEqual(_expansion_mode(res.stderr), "full", res.stderr)
         self.assertEqual(_rerank_mode(res.stderr), "off", res.stderr)
         metrics = _parse_verify(res.stdout)

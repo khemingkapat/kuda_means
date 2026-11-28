@@ -13,9 +13,10 @@
 // by the shifted distance ||c||^2 - 2 x.c. Setting KUDA_V4_FULL_EXPANSION=1 ranks by the full
 // float expansion instead, to measure floating-point cancellation against V0.
 // Either form loses precision when ||x||, ||c|| >> ||x - c|| (cancellation), which flipped a few
-// near-tie assignments vs. V0. By default the GEMM keeps each point's top-2 candidates and
-// re-scores them with the exact (x - c)^2 form (KUDA_V4_EXACT_RERANK=0 disables this to expose the
-// raw error). Accumulation reuses V3's privatized shared-memory reduction (global-atomic fallback
+// near-tie assignments vs. V0. The GEMM keeps each point's top-2 candidates and, only when their
+// gap is within a float error bound (a close call), re-scores both with the exact (x - c)^2 form.
+// KUDA_V4_EXACT_RERANK=0 disables this (raw error); =all re-scores every point (cost reference).
+// Accumulation reuses V3's privatized shared-memory reduction (global-atomic fallback
 // when the accumulators do not fit). Centroids are read with __ldg (see docs/v2_analysis.md).
 
 #include "cuda_utils.cuh"
@@ -54,6 +55,16 @@ constexpr int kThreadsY = kTileM / kMicro;          // 16 threads across points
 constexpr int kGemmThreads = kThreadsX * kThreadsY; // 256
 constexpr int kCentroidPad = 4;                     // keeps float4 alignment, staggers banks
 constexpr int kNoCentroid = INT_MAX;                // empty top-2 slot
+
+// Exact re-rank modes (KUDA_V4_EXACT_RERANK): off, close calls only (default), every point.
+constexpr int kRerankOff = 0;
+constexpr int kRerankCloseCalls = 1;
+constexpr int kRerankAll = 2;
+// A point is a close call when its two best GEMM distances differ by less than
+// kRerankSafety * (D + 2) * FLT_EPSILON * (||x||^2 + max ||c||^2). (D + 2) * eps * scale bounds the
+// float error of one expansion term sum; the safety factor covers both candidates' GEMM error and
+// the rounding of the exact form, so any pair whose order could differ from V0 is re-scored.
+constexpr float kRerankSafety = 8.0f;
 
 static_assert(kBlockSize % kWarpSize == 0, "Block size must be a whole number of warps");
 static_assert(kThreadsX == 16, "Argmin reduction assumes 16 lanes share one point row");
@@ -108,13 +119,13 @@ __device__ __forceinline__ float exact_dist_sq(const float *__restrict__ points,
 }
 
 // Tiled GEMM (X * C^T) fused with a top-2 argmin. The expansion loses precision when ||x||, ||c||
-// are large relative to ||x - c|| (cancellation), so with Rerank the two best GEMM candidates are
-// re-scored with the exact (x - c)^2 form before the final choice.
-template <bool FullExpansion, bool Rerank>
+// are large relative to ||x - c|| (cancellation), so the two best GEMM candidates of a close call
+// are re-scored with the exact (x - c)^2 form before the final choice.
+template <bool FullExpansion, int RerankMode>
 __global__ void __launch_bounds__(kGemmThreads)
     gemm_argmin_v4_kernel(const float *__restrict__ points, const float *__restrict__ centroids,
                           const float *__restrict__ cnorm, const float *__restrict__ xnorm,
-                          int *assignments, int n, int d, int k) {
+                          int *assignments, unsigned int *rerank_count, int n, int d, int k) {
     __shared__ __align__(16) float s_x[kTileK][kTileM];
     __shared__ __align__(16) float s_c[kTileK][kTileN + kCentroidPad];
 
@@ -222,6 +233,8 @@ __global__ void __launch_bounds__(kGemmThreads)
 
     // Merge each point row's top-2 across the 16 lanes (tx) with an xor butterfly; lanes hold
     // disjoint centroid sets, so every lane ends with the same global top-2.
+    float top_v[kMicro];
+    float second_v[kMicro];
     int top_k[kMicro];
     int second_k[kMicro];
 #pragma unroll
@@ -255,6 +268,8 @@ __global__ void __launch_bounds__(kGemmThreads)
                 k1 = ok1;
             }
         }
+        top_v[i] = v1;
+        second_v[i] = v2;
         top_k[i] = k1;
         second_k[i] = k2;
     }
@@ -265,13 +280,23 @@ __global__ void __launch_bounds__(kGemmThreads)
         const int p = p0 + ty * kMicro + i;
         if (tx == i && p < n) {
             int choice = top_k[i];
-            if constexpr (Rerank) {
+            if constexpr (RerankMode != kRerankOff) {
                 const int alt = second_k[i];
                 if (alt != kNoCentroid) {
-                    const float e1 = exact_dist_sq(points, centroids, p, choice, n, d);
-                    const float e2 = exact_dist_sq(points, centroids, p, alt, n, d);
-                    if (ranks_before(e2, alt, e1, choice)) {
-                        choice = alt;
+                    bool close_call = true;
+                    if constexpr (RerankMode == kRerankCloseCalls) {
+                        const float scale = xnorm[p] + fmaxf(cnorm[choice], cnorm[alt]);
+                        const float tol =
+                            kRerankSafety * static_cast<float>(d + 2) * FLT_EPSILON * scale;
+                        close_call = (second_v[i] - top_v[i]) <= tol;
+                    }
+                    if (close_call) {
+                        atomicAdd(rerank_count, 1u);
+                        const float e1 = exact_dist_sq(points, centroids, p, choice, n, d);
+                        const float e2 = exact_dist_sq(points, centroids, p, alt, n, d);
+                        if (ranks_before(e2, alt, e1, choice)) {
+                            choice = alt;
+                        }
                     }
                 }
             }
@@ -408,16 +433,17 @@ struct V4DeviceBuffers {
     float *points = nullptr;
     float *centroids = nullptr;
     float *cnorm = nullptr;
-    float *xnorm = nullptr; // only allocated in full-expansion mode
+    float *xnorm = nullptr; // ||x||^2: full expansion and the close-call tolerance
     double *sums = nullptr;
     int *counts = nullptr;
     int *assignments = nullptr;
     double *shift_sq = nullptr;
+    unsigned int *rerank_count = nullptr; // points re-scored exactly (diagnostic)
 };
 
 struct V4LaunchPlan {
     bool full_expansion = false;
-    bool rerank = true;
+    int rerank_mode = kRerankCloseCalls;
     bool use_shared = false;
     size_t smem_bytes = 0;
     int grid_n = 0;    // one thread per point
@@ -435,6 +461,25 @@ bool env_flag(const char *name, bool default_value) {
     return std::strcmp(env, "0") != 0;
 }
 
+// KUDA_V4_EXACT_RERANK: "0" = off, "all" = every point, anything else / unset = close calls only.
+int rerank_mode_from_env() {
+    const char *env = std::getenv("KUDA_V4_EXACT_RERANK");
+    if (env != nullptr && std::strcmp(env, "0") == 0) {
+        return kRerankOff;
+    }
+    if (env != nullptr && std::strcmp(env, "all") == 0) {
+        return kRerankAll;
+    }
+    return kRerankCloseCalls;
+}
+
+const char *rerank_mode_name(int mode) {
+    if (mode == kRerankOff) {
+        return "off";
+    }
+    return mode == kRerankAll ? "all" : "close_calls";
+}
+
 V4LaunchPlan make_launch_plan(const KMeansConfig &cfg) {
     const auto k = static_cast<size_t>(cfg.k_clusters);
     const auto d = static_cast<size_t>(cfg.dim);
@@ -449,7 +494,7 @@ V4LaunchPlan make_launch_plan(const KMeansConfig &cfg) {
 
     V4LaunchPlan plan;
     plan.full_expansion = env_flag("KUDA_V4_FULL_EXPANSION", false);
-    plan.rerank = env_flag("KUDA_V4_EXACT_RERANK", true);
+    plan.rerank_mode = rerank_mode_from_env();
     plan.smem_bytes = k * d * sizeof(double) + k * sizeof(int);
     plan.use_shared = plan.smem_bytes <= static_cast<size_t>(smem_optin);
     plan.grid_n = (cfg.n_points + kBlockSize - 1) / kBlockSize;
@@ -460,7 +505,7 @@ V4LaunchPlan make_launch_plan(const KMeansConfig &cfg) {
     std::fprintf(stderr,
                  "[v4] distance: gemm (tile %dx%dx%d, %d threads), expansion=%s, exact_rerank=%s\n",
                  kTileM, kTileN, kTileK, kGemmThreads, plan.full_expansion ? "full" : "shifted",
-                 plan.rerank ? "top2" : "off");
+                 rerank_mode_name(plan.rerank_mode));
 
     if (plan.use_shared) {
         if (plan.smem_bytes > kDefaultSharedLimit) {
@@ -483,16 +528,22 @@ V4LaunchPlan make_launch_plan(const KMeansConfig &cfg) {
     return plan;
 }
 
+template <bool FullExpansion, int RerankMode>
+void launch_gemm_mode(const V4LaunchPlan &plan, const V4DeviceBuffers &buf,
+                      const KMeansConfig &cfg) {
+    gemm_argmin_v4_kernel<FullExpansion, RerankMode><<<plan.grid_gemm, kGemmThreads>>>(
+        buf.points, buf.centroids, buf.cnorm, buf.xnorm, buf.assignments, buf.rerank_count,
+        cfg.n_points, cfg.dim, cfg.k_clusters);
+}
+
 template <bool FullExpansion>
 void launch_gemm(const V4LaunchPlan &plan, const V4DeviceBuffers &buf, const KMeansConfig &cfg) {
-    if (plan.rerank) {
-        gemm_argmin_v4_kernel<FullExpansion, true><<<plan.grid_gemm, kGemmThreads>>>(
-            buf.points, buf.centroids, buf.cnorm, buf.xnorm, buf.assignments, cfg.n_points, cfg.dim,
-            cfg.k_clusters);
+    if (plan.rerank_mode == kRerankOff) {
+        launch_gemm_mode<FullExpansion, kRerankOff>(plan, buf, cfg);
+    } else if (plan.rerank_mode == kRerankAll) {
+        launch_gemm_mode<FullExpansion, kRerankAll>(plan, buf, cfg);
     } else {
-        gemm_argmin_v4_kernel<FullExpansion, false><<<plan.grid_gemm, kGemmThreads>>>(
-            buf.points, buf.centroids, buf.cnorm, buf.xnorm, buf.assignments, cfg.n_points, cfg.dim,
-            cfg.k_clusters);
+        launch_gemm_mode<FullExpansion, kRerankCloseCalls>(plan, buf, cfg);
     }
 }
 
@@ -526,8 +577,8 @@ void run_single_lloyd_v4(const std::vector<float> &points_soa,
                          const V4LaunchPlan &plan, const V4DeviceBuffers &buf,
                          std::vector<double> &h_shift_sq, std::vector<int> &assignments,
                          std::vector<float> &centroids, int &iterations_out, bool record_timers,
-                         double &kernel_ms_out, double &e2e_ms_out, CudaTimer &kernel_timer,
-                         CudaTimer &e2e_timer) {
+                         double &kernel_ms_out, double &e2e_ms_out, unsigned int &reranked_out,
+                         CudaTimer &kernel_timer, CudaTimer &e2e_timer) {
     const auto n = static_cast<size_t>(cfg.n_points);
     const auto d = static_cast<size_t>(cfg.dim);
     const auto k = static_cast<size_t>(cfg.k_clusters);
@@ -553,17 +604,16 @@ void run_single_lloyd_v4(const std::vector<float> &points_soa,
     CHECK_CUDA(
         cudaMemcpy(buf.centroids, init_centroids.data(), centroids_bytes, cudaMemcpyHostToDevice));
 
-    // ||x||^2 is needed only for the full expansion; computed once per run, counted as kernel time.
-    if (plan.full_expansion) {
-        if (record_timers) {
-            kernel_timer.start();
-        }
-        point_norms_v4_kernel<<<plan.grid_n, kBlockSize>>>(buf.points, buf.xnorm, cfg.n_points,
-                                                           cfg.dim);
-        CHECK_LAST_CUDA_ERROR();
-        if (record_timers) {
-            run_kernel_ms += static_cast<double>(kernel_timer.stop_ms());
-        }
+    // ||x||^2 (full expansion + close-call tolerance): computed once per run, counted as kernel
+    // time.
+    if (record_timers) {
+        kernel_timer.start();
+    }
+    point_norms_v4_kernel<<<plan.grid_n, kBlockSize>>>(buf.points, buf.xnorm, cfg.n_points,
+                                                       cfg.dim);
+    CHECK_LAST_CUDA_ERROR();
+    if (record_timers) {
+        run_kernel_ms += static_cast<double>(kernel_timer.stop_ms());
     }
 
     for (int iter = 0; iter < cfg.max_iters; ++iter) {
@@ -601,7 +651,9 @@ void run_single_lloyd_v4(const std::vector<float> &points_soa,
         }
     }
 
-    // Final assignment pass so assignments & SSE match the returned centroids exactly.
+    // Final assignment pass so assignments & SSE match the returned centroids exactly. The
+    // re-rank counter is reset here so it reports how many points this pass re-scored.
+    CHECK_CUDA(cudaMemsetAsync(buf.rerank_count, 0, sizeof(unsigned int), 0));
     if (record_timers) {
         kernel_timer.start();
     }
@@ -619,6 +671,8 @@ void run_single_lloyd_v4(const std::vector<float> &points_soa,
         run_e2e_ms = static_cast<double>(e2e_timer.stop_ms());
     }
 
+    CHECK_CUDA(
+        cudaMemcpy(&reranked_out, buf.rerank_count, sizeof(unsigned int), cudaMemcpyDeviceToHost));
     iterations_out = iter_done;
     kernel_ms_out = run_kernel_ms;
     e2e_ms_out = run_e2e_ms;
@@ -646,13 +700,13 @@ KMeansResult run_kmeans_v4(const std::vector<float> &points,
     CHECK_CUDA(cudaMalloc(&buf.points, n * d * sizeof(float)));
     CHECK_CUDA(cudaMalloc(&buf.centroids, k * d * sizeof(float)));
     CHECK_CUDA(cudaMalloc(&buf.cnorm, k * sizeof(float)));
-    if (plan.full_expansion) {
-        CHECK_CUDA(cudaMalloc(&buf.xnorm, n * sizeof(float)));
-    }
+    CHECK_CUDA(cudaMalloc(&buf.xnorm, n * sizeof(float)));
     CHECK_CUDA(cudaMalloc(&buf.sums, k * d * sizeof(double)));
     CHECK_CUDA(cudaMalloc(&buf.counts, k * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&buf.assignments, n * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&buf.shift_sq, k * sizeof(double)));
+    CHECK_CUDA(cudaMalloc(&buf.rerank_count, sizeof(unsigned int)));
+    unsigned int reranked = 0;
 
     KMeansResult res;
     res.assignments.resize(n);
@@ -668,7 +722,7 @@ KMeansResult run_kmeans_v4(const std::vector<float> &points,
         double dummy_e2e_ms = 0.0;
         run_single_lloyd_v4(points_soa, init_centroids, cfg, plan, buf, h_shift_sq, res.assignments,
                             res.centroids, res.iterations, false, dummy_kernel_ms, dummy_e2e_ms,
-                            kernel_timer, e2e_timer);
+                            reranked, kernel_timer, e2e_timer);
     }
 
     // Timed benchmark runs.
@@ -679,18 +733,21 @@ KMeansResult run_kmeans_v4(const std::vector<float> &points,
         double run_e2e_ms = 0.0;
         run_single_lloyd_v4(points_soa, init_centroids, cfg, plan, buf, h_shift_sq, res.assignments,
                             res.centroids, res.iterations, true, run_kernel_ms, run_e2e_ms,
-                            kernel_timer, e2e_timer);
+                            reranked, kernel_timer, e2e_timer);
         total_kernel_ms += run_kernel_ms;
         total_e2e_ms += run_e2e_ms;
     }
 
+    std::fprintf(stderr, "[v4] exact re-rank (final assignment pass): %u of %d points (%.4f%%)\n",
+                 reranked, cfg.n_points,
+                 100.0 * static_cast<double>(reranked) / static_cast<double>(cfg.n_points));
+
+    CHECK_CUDA(cudaFree(buf.rerank_count));
     CHECK_CUDA(cudaFree(buf.shift_sq));
     CHECK_CUDA(cudaFree(buf.assignments));
     CHECK_CUDA(cudaFree(buf.counts));
     CHECK_CUDA(cudaFree(buf.sums));
-    if (buf.xnorm != nullptr) {
-        CHECK_CUDA(cudaFree(buf.xnorm));
-    }
+    CHECK_CUDA(cudaFree(buf.xnorm));
     CHECK_CUDA(cudaFree(buf.cnorm));
     CHECK_CUDA(cudaFree(buf.centroids));
     CHECK_CUDA(cudaFree(buf.points));
