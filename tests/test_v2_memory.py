@@ -115,7 +115,8 @@ class TestV2MemoryTuning(unittest.TestCase):
         )
         self.assertIsNotNone(
             const_match,
-            "Could not find __constant__ array declaration matching '__constant__ float name[size]'",
+            "Could not find __constant__ array declaration matching "
+            "'__constant__ float name[size]'",
         )
         assert const_match is not None
         size_expr = const_match.group(2).strip()
@@ -139,7 +140,8 @@ class TestV2MemoryTuning(unittest.TestCase):
         self.assertLessEqual(
             capacity,
             MAX_CONSTANT_FLOATS,
-            f"Constant centroid buffer size ({capacity}) exceeds 64 KB limit ({MAX_CONSTANT_FLOATS} floats)",
+            f"Constant centroid buffer size ({capacity}) exceeds 64 KB limit "
+            f"({MAX_CONSTANT_FLOATS} floats)",
         )
         self.assertGreater(capacity, 0, "Constant centroid buffer size must be > 0")
 
@@ -190,7 +192,7 @@ class TestV2MemoryTuning(unittest.TestCase):
         self.assertRegex(
             src,
             r"(count\s*==\s*0|counts\[\w+\]\s*==\s*0)",
-            "Centroid update must check for count == 0 to prevent division by zero on empty clusters",
+            "Centroid update must check count == 0 to prevent division by zero on empty clusters",
         )
 
     def test_ac1_formatting_and_cpu_build(self) -> None:
@@ -236,13 +238,20 @@ class TestV2MemoryTuning(unittest.TestCase):
             self.skipTest(f"GPU binary {GPU_BIN} not available on this host")
 
         cmd = [
-            "--version", "v2",
-            "-n", "100000",
-            "-d", "16",
-            "-k", "8",
-            "--max-iters", "50",
-            "--warmup", "0",
-            "--runs", "1",
+            "--version",
+            "v2",
+            "-n",
+            "100000",
+            "-d",
+            "16",
+            "-k",
+            "8",
+            "--max-iters",
+            "50",
+            "--warmup",
+            "0",
+            "--runs",
+            "1",
         ]
         res = _run_gpu_command(cmd)
         self.assertEqual(
@@ -252,7 +261,9 @@ class TestV2MemoryTuning(unittest.TestCase):
         )
 
         metrics = _parse_output_metrics(res.stdout)
-        self.assertEqual(metrics.get("verify_status"), "PASS", f"Verification failed:\n{res.stdout}")
+        self.assertEqual(
+            metrics.get("verify_status"), "PASS", f"Verification failed:\n{res.stdout}"
+        )
         self.assertEqual(metrics.get("assignment_mismatches"), 0)
         self.assertLessEqual(metrics.get("max_centroid_abs_diff", 1.0), 1e-3)
         self.assertLessEqual(metrics.get("sse_rel_diff", 1.0), 1e-3)
@@ -269,23 +280,33 @@ class TestV2MemoryTuning(unittest.TestCase):
             self.skipTest(f"GPU binary {GPU_BIN} not available on this host")
 
         cmd = [
-            "--version", "v2",
-            "-n", "2000",
-            "-d", "32",
-            "-k", "512",
-            "--max-iters", "5",
-            "--warmup", "0",
-            "--runs", "1",
+            "--version",
+            "v2",
+            "-n",
+            "2000",
+            "-d",
+            "32",
+            "-k",
+            "512",
+            "--max-iters",
+            "5",
+            "--warmup",
+            "0",
+            "--runs",
+            "1",
         ]
         res = _run_gpu_command(cmd)
         self.assertEqual(
             res.returncode,
             0,
-            f"V2 exact boundary execution failed (rc={res.returncode}):\n{res.stderr}\n{res.stdout}",
+            f"V2 exact boundary execution failed (rc={res.returncode}):\n"
+            f"{res.stderr}\n{res.stdout}",
         )
 
         metrics = _parse_output_metrics(res.stdout)
-        self.assertEqual(metrics.get("verify_status"), "PASS", f"Verification failed:\n{res.stdout}")
+        self.assertEqual(
+            metrics.get("verify_status"), "PASS", f"Verification failed:\n{res.stdout}"
+        )
         self.assertEqual(metrics.get("assignment_mismatches"), 0)
         self.assertLessEqual(metrics.get("max_centroid_abs_diff", 1.0), 1e-3)
 
@@ -296,23 +317,33 @@ class TestV2MemoryTuning(unittest.TestCase):
             self.skipTest(f"GPU binary {GPU_BIN} not available on this host")
 
         cmd = [
-            "--version", "v2",
-            "-n", "2000",
-            "-d", "32",
-            "-k", "1024",
-            "--max-iters", "5",
-            "--warmup", "0",
-            "--runs", "1",
+            "--version",
+            "v2",
+            "-n",
+            "2000",
+            "-d",
+            "32",
+            "-k",
+            "1024",
+            "--max-iters",
+            "5",
+            "--warmup",
+            "0",
+            "--runs",
+            "1",
         ]
         res = _run_gpu_command(cmd)
         self.assertEqual(
             res.returncode,
             0,
-            f"V2 overflow fallback execution failed (rc={res.returncode}):\n{res.stderr}\n{res.stdout}",
+            f"V2 overflow fallback execution failed (rc={res.returncode}):\n"
+            f"{res.stderr}\n{res.stdout}",
         )
 
         metrics = _parse_output_metrics(res.stdout)
-        self.assertEqual(metrics.get("verify_status"), "PASS", f"Verification failed:\n{res.stdout}")
+        self.assertEqual(
+            metrics.get("verify_status"), "PASS", f"Verification failed:\n{res.stdout}"
+        )
         self.assertEqual(metrics.get("assignment_mismatches"), 0)
         self.assertLessEqual(metrics.get("max_centroid_abs_diff", 1.0), 1e-3)
 
@@ -327,13 +358,20 @@ class TestV2MemoryTuning(unittest.TestCase):
             self.skipTest(f"GPU binary {GPU_BIN} not available on this host")
 
         cmd = [
-            "--version", "v2",
-            "-n", "99999",
-            "-d", "16",
-            "-k", "8",
-            "--max-iters", "5",
-            "--warmup", "0",
-            "--runs", "1",
+            "--version",
+            "v2",
+            "-n",
+            "99999",
+            "-d",
+            "16",
+            "-k",
+            "8",
+            "--max-iters",
+            "5",
+            "--warmup",
+            "0",
+            "--runs",
+            "1",
         ]
         res = _run_gpu_command(cmd)
         self.assertEqual(
@@ -343,7 +381,9 @@ class TestV2MemoryTuning(unittest.TestCase):
         )
 
         metrics = _parse_output_metrics(res.stdout)
-        self.assertEqual(metrics.get("verify_status"), "PASS", f"Verification failed:\n{res.stdout}")
+        self.assertEqual(
+            metrics.get("verify_status"), "PASS", f"Verification failed:\n{res.stdout}"
+        )
         self.assertEqual(metrics.get("assignment_mismatches"), 0)
 
     # =========================================================================
@@ -401,7 +441,9 @@ class TestV2MemoryTuning(unittest.TestCase):
         )
 
         self.assertGreater(hardware.get("sm_count", 0), 0, "hardware.sm_count must be > 0")
-        self.assertGreater(hardware.get("global_mem_mb", 0.0), 0.0, "hardware.global_mem_mb must be > 0")
+        self.assertGreater(
+            hardware.get("global_mem_mb", 0.0), 0.0, "hardware.global_mem_mb must be > 0"
+        )
 
         cuda_version = str(hardware.get("cuda_version", "")).strip()
         self.assertTrue(cuda_version, "hardware.cuda_version must be non-empty")
@@ -409,7 +451,9 @@ class TestV2MemoryTuning(unittest.TestCase):
 
         git_commit = str(hardware.get("git_commit", "")).strip()
         self.assertTrue(git_commit, "hardware.git_commit must be non-empty")
-        self.assertNotIn(git_commit, ("unknown", ""), "hardware.git_commit must be valid commit SHA")
+        self.assertNotIn(
+            git_commit, ("unknown", ""), "hardware.git_commit must be valid commit SHA"
+        )
 
 
 if __name__ == "__main__":
