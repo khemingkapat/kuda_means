@@ -1,0 +1,35 @@
+{
+  "version": "v1",
+  "config": {
+    "n_points": 1000000,
+    "dim": 32,
+    "k_clusters": 16,
+    "max_iters": 50,
+    "epsilon": 9.99999975e-05,
+    "seed": 42,
+    "warmup_runs": 1,
+    "bench_runs": 5
+  },
+  "hardware": {
+    "gpu_name": "Tesla T4",
+    "compute_cap": "sm_75",
+    "sm_count": 40,
+    "global_mem_mb": 14912.687500,
+    "cuda_version": "13.0",
+    "git_commit": "754c451"
+  },
+  "metrics": {
+    "iterations": 50,
+    "sse": 142835632.253586,
+    "kernel_ms": 983.940527,
+    "e2e_ms": 1014.485620,
+    "ms_per_iter": 19.678811
+  },
+  "verified": true,
+  "verification": {
+    "passed": true,
+    "assignment_mismatches": 0,
+    "max_centroid_abs_diff": 0,
+    "sse_rel_diff": 0
+  }
+}
