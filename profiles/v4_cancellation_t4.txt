@@ -1,0 +1,54 @@
+== D=16 K=8 rerank=0 full=0
+[v4] exact re-rank (final assignment pass): 0 of 100000 points (0.0000%)
+[verify] status=FAIL assignment_mismatches=393 max_centroid_abs_diff=3.645039e-02 sse_rel_diff=7.470064e-07
+== D=16 K=8 rerank=0 full=1
+[v4] exact re-rank (final assignment pass): 0 of 100000 points (0.0000%)
+[verify] status=FAIL assignment_mismatches=73 max_centroid_abs_diff=9.428024e-03 sse_rel_diff=2.797786e-07
+== D=16 K=8 rerank=1 full=0
+[v4] exact re-rank (final assignment pass): 41 of 100000 points (0.0410%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+== D=16 K=8 rerank=1 full=1
+[v4] exact re-rank (final assignment pass): 41 of 100000 points (0.0410%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+== D=16 K=8 rerank=all full=0
+[v4] exact re-rank (final assignment pass): 100000 of 100000 points (100.0000%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+== D=16 K=8 rerank=all full=1
+[v4] exact re-rank (final assignment pass): 100000 of 100000 points (100.0000%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+== D=128 K=64 rerank=0 full=0
+[v4] exact re-rank (final assignment pass): 0 of 100000 points (0.0000%)
+[verify] status=FAIL assignment_mismatches=557 max_centroid_abs_diff=1.240911e-01 sse_rel_diff=1.373569e-08
+== D=128 K=64 rerank=0 full=1
+[v4] exact re-rank (final assignment pass): 0 of 100000 points (0.0000%)
+[verify] status=FAIL assignment_mismatches=578 max_centroid_abs_diff=1.240911e-01 sse_rel_diff=6.772281e-08
+== D=128 K=64 rerank=1 full=0
+[v4] exact re-rank (final assignment pass): 1446 of 100000 points (1.4460%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+== D=128 K=64 rerank=1 full=1
+[v4] exact re-rank (final assignment pass): 1446 of 100000 points (1.4460%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+== D=128 K=64 rerank=all full=0
+[v4] exact re-rank (final assignment pass): 100000 of 100000 points (100.0000%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+== D=128 K=64 rerank=all full=1
+[v4] exact re-rank (final assignment pass): 100000 of 100000 points (100.0000%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+== D=128 K=256 rerank=0 full=0
+[v4] exact re-rank (final assignment pass): 0 of 100000 points (0.0000%)
+[verify] status=FAIL assignment_mismatches=62 max_centroid_abs_diff=1.036396e-01 sse_rel_diff=8.857074e-07
+== D=128 K=256 rerank=0 full=1
+[v4] exact re-rank (final assignment pass): 0 of 100000 points (0.0000%)
+[verify] status=FAIL assignment_mismatches=54 max_centroid_abs_diff=8.011580e-02 sse_rel_diff=7.876289e-07
+== D=128 K=256 rerank=1 full=0
+[v4] exact re-rank (final assignment pass): 521 of 100000 points (0.5210%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+== D=128 K=256 rerank=1 full=1
+[v4] exact re-rank (final assignment pass): 521 of 100000 points (0.5210%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+== D=128 K=256 rerank=all full=0
+[v4] exact re-rank (final assignment pass): 100000 of 100000 points (100.0000%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+== D=128 K=256 rerank=all full=1
+[v4] exact re-rank (final assignment pass): 100000 of 100000 points (100.0000%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
