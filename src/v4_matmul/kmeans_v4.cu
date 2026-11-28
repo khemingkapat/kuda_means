@@ -1,0 +1,613 @@
+// V4 — Distance as MatMul: tiled shared-memory GEMM with a fused argmin.
+//
+// V3 profiling showed that, once global atomics are privatized, K-Means is compute-bound in the
+// O(N*K*D) distance loop. V4 rewrites that loop with the expansion
+//     ||x - c||^2 = ||x||^2 - 2 x.c + ||c||^2          (Johnson et al., 2019)
+// so the dominant work becomes the dense product X * C^T, computed with a classic register-tiled
+// shared-memory GEMM:
+//   * a 16x16 thread block owns 64 points and sweeps all centroids in tiles of 64,
+//   * 16-dimension slices of X (SoA, D x N) and C (K x D) are staged in shared memory,
+//   * each thread keeps a 4x4 micro-tile of dot products in registers (float4 shared reads),
+//   * the argmin is fused into the epilogue, so the N x K distance matrix is never stored.
+// ||x||^2 is constant per point and does not change the argmin, so by default centroids are ranked
+// by the shifted distance ||c||^2 - 2 x.c. Setting KUDA_V4_FULL_EXPANSION=1 ranks by the full
+// float expansion instead, to measure floating-point cancellation against V0.
+// Accumulation reuses V3's privatized shared-memory reduction (global-atomic fallback when the
+// accumulators do not fit). Centroids are read with __ldg (see docs/v2_analysis.md).
+
+#include "cuda_utils.cuh"
+#include "kmeans_common.h"
+#include "kmeans_gpu.cuh"
+
+#include <algorithm>
+#include <cfloat>
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ < 700)
+#error "V4 requires sm_70+ (__match_any_sync in the accumulation kernel)."
+#endif
+
+namespace kuda {
+
+namespace {
+
+constexpr int kBlockSize = 256;
+constexpr int kWarpSize = 32;
+constexpr unsigned kFullMask = 0xffffffffu;
+constexpr size_t kDefaultSharedLimit = 48 * 1024;
+
+// GEMM tiling: block tile = kTileM points x kTileN centroids, staged kTileK dimensions at a time.
+constexpr int kTileM = 64;
+constexpr int kTileN = 64;
+constexpr int kTileK = 16;
+constexpr int kMicro = 4;                           // per-thread micro-tile: 4 points x 4 centroids
+constexpr int kThreadsX = kTileN / kMicro;          // 16 threads across centroids
+constexpr int kThreadsY = kTileM / kMicro;          // 16 threads across points
+constexpr int kGemmThreads = kThreadsX * kThreadsY; // 256
+constexpr int kCentroidPad = 4;                     // keeps float4 alignment, staggers banks
+
+static_assert(kBlockSize % kWarpSize == 0, "Block size must be a whole number of warps");
+static_assert(kThreadsX == 16, "Argmin reduction assumes 16 lanes share one point row");
+static_assert(kGemmThreads % kWarpSize == 0, "GEMM block must be a whole number of warps");
+
+__global__ void point_norms_v4_kernel(const float *__restrict__ points, float *xnorm, int n,
+                                      int d) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) {
+        return;
+    }
+    float s = 0.0f;
+    for (int j = 0; j < d; ++j) {
+        const float v = points[static_cast<size_t>(j) * static_cast<size_t>(n) + idx];
+        s = fmaf(v, v, s);
+    }
+    xnorm[idx] = s;
+}
+
+__global__ void centroid_norms_v4_kernel(const float *__restrict__ centroids, float *cnorm, int d,
+                                         int k) {
+    const int c = blockIdx.x * blockDim.x + threadIdx.x;
+    if (c >= k) {
+        return;
+    }
+    const float *row = centroids + static_cast<size_t>(c) * static_cast<size_t>(d);
+    float s = 0.0f;
+    for (int j = 0; j < d; ++j) {
+        s = fmaf(row[j], row[j], s);
+    }
+    cnorm[c] = s;
+}
+
+// Tiled GEMM (X * C^T) fused with argmin. Ties resolve to the lowest centroid index, like V0.
+template <bool FullExpansion>
+__global__ void __launch_bounds__(kGemmThreads)
+    gemm_argmin_v4_kernel(const float *__restrict__ points, const float *__restrict__ centroids,
+                          const float *__restrict__ cnorm, const float *__restrict__ xnorm,
+                          int *assignments, int n, int d, int k) {
+    __shared__ __align__(16) float s_x[kTileK][kTileM];
+    __shared__ __align__(16) float s_c[kTileK][kTileN + kCentroidPad];
+
+    const int tid = static_cast<int>(threadIdx.x);
+    const int tx = tid % kThreadsX; // centroid micro-tile column
+    const int ty = tid / kThreadsX; // point micro-tile row
+    const int p0 = blockIdx.x * kTileM;
+    const auto n_sz = static_cast<size_t>(n);
+    const auto d_sz = static_cast<size_t>(d);
+
+    float best[kMicro];
+    int best_k[kMicro];
+    float x_norm[kMicro];
+#pragma unroll
+    for (int i = 0; i < kMicro; ++i) {
+        best[i] = FLT_MAX;
+        best_k[i] = 0;
+        x_norm[i] = 0.0f;
+        if constexpr (FullExpansion) {
+            const int p = p0 + ty * kMicro + i;
+            x_norm[i] = p < n ? xnorm[p] : 0.0f;
+        }
+    }
+
+    for (int c0 = 0; c0 < k; c0 += kTileN) {
+        float acc[kMicro][kMicro];
+#pragma unroll
+        for (int i = 0; i < kMicro; ++i) {
+#pragma unroll
+            for (int j = 0; j < kMicro; ++j) {
+                acc[i][j] = 0.0f;
+            }
+        }
+
+        for (int d0 = 0; d0 < d; d0 += kTileK) {
+            // Stage X tile: consecutive threads read consecutive points (coalesced SoA rows).
+            for (int e = tid; e < kTileK * kTileM; e += kGemmThreads) {
+                const int kk = e / kTileM;
+                const int m = e % kTileM;
+                const int p = p0 + m;
+                const int dd = d0 + kk;
+                s_x[kk][m] = (p < n && dd < d) ? points[static_cast<size_t>(dd) * n_sz + p] : 0.0f;
+            }
+            // Stage C tile: consecutive threads read consecutive dimensions of one centroid.
+            for (int e = tid; e < kTileK * kTileN; e += kGemmThreads) {
+                const int cc = e / kTileK;
+                const int kk = e % kTileK;
+                const int c = c0 + cc;
+                const int dd = d0 + kk;
+                s_c[kk][cc] = (c < k && dd < d)
+                                  ? __ldg(&centroids[static_cast<size_t>(c) * d_sz + dd])
+                                  : 0.0f;
+            }
+            __syncthreads();
+
+#pragma unroll
+            for (int kk = 0; kk < kTileK; ++kk) {
+                const float4 a = *reinterpret_cast<const float4 *>(&s_x[kk][ty * kMicro]);
+                const float4 b = *reinterpret_cast<const float4 *>(&s_c[kk][tx * kMicro]);
+                const float av[kMicro] = {a.x, a.y, a.z, a.w};
+                const float bv[kMicro] = {b.x, b.y, b.z, b.w};
+#pragma unroll
+                for (int i = 0; i < kMicro; ++i) {
+#pragma unroll
+                    for (int j = 0; j < kMicro; ++j) {
+                        acc[i][j] = fmaf(av[i], bv[j], acc[i][j]);
+                    }
+                }
+            }
+            __syncthreads();
+        }
+
+        // Epilogue: distances for this centroid tile, scanned in ascending centroid order.
+#pragma unroll
+        for (int j = 0; j < kMicro; ++j) {
+            const int c = c0 + tx * kMicro + j;
+            if (c < k) {
+                const float cn = cnorm[c];
+#pragma unroll
+                for (int i = 0; i < kMicro; ++i) {
+                    float dist;
+                    if constexpr (FullExpansion) {
+                        dist = (x_norm[i] + cn) - 2.0f * acc[i][j];
+                    } else {
+                        dist = cn - 2.0f * acc[i][j];
+                    }
+                    if (dist < best[i]) {
+                        best[i] = dist;
+                        best_k[i] = c;
+                    }
+                }
+            }
+        }
+    }
+
+    // Reduce each point row across the 16 lanes (tx) that hold its centroid candidates.
+#pragma unroll
+    for (int i = 0; i < kMicro; ++i) {
+        float v = best[i];
+        int bk = best_k[i];
+#pragma unroll
+        for (int offset = kThreadsX / 2; offset > 0; offset >>= 1) {
+            const float other_v = __shfl_xor_sync(kFullMask, v, offset);
+            const int other_k = __shfl_xor_sync(kFullMask, bk, offset);
+            if (other_v < v || (other_v == v && other_k < bk)) {
+                v = other_v;
+                bk = other_k;
+            }
+        }
+        const int p = p0 + ty * kMicro + i;
+        if (tx == 0 && p < n) {
+            assignments[p] = bk;
+        }
+    }
+}
+
+// Segmented warp reduction over lanes that share a cluster (same as V3).
+__device__ __forceinline__ double reduce_peers(unsigned peers, double x) {
+    const int lane = static_cast<int>(threadIdx.x) & (kWarpSize - 1);
+    int rank = __popc(peers & ((1u << lane) - 1u));
+    unsigned higher = peers & (0xfffffffeu << lane);
+
+    while (__any_sync(kFullMask, higher != 0u)) {
+        const int next = __ffs(static_cast<int>(higher)); // 1-based lane, 0 if none
+        const double other = __shfl_sync(kFullMask, x, next > 0 ? next - 1 : lane);
+        if (next > 0) {
+            x += other;
+        }
+        higher &= ~__ballot_sync(kFullMask, rank & 1);
+        rank >>= 1;
+    }
+    return x;
+}
+
+// Privatized accumulation (V3 scheme) driven by the assignments written by the GEMM kernel.
+__global__ void accumulate_privatized_v4_kernel(const float *__restrict__ points,
+                                                const int *__restrict__ assignments, double *sums,
+                                                int *counts, int n, int d, int k) {
+    extern __shared__ double s_mem[];
+    const int kd = k * d;
+    double *s_sums = s_mem;
+    int *s_counts = reinterpret_cast<int *>(s_mem + kd);
+
+    for (int i = threadIdx.x; i < kd; i += blockDim.x) {
+        s_sums[i] = 0.0;
+    }
+    for (int i = threadIdx.x; i < k; i += blockDim.x) {
+        s_counts[i] = 0;
+    }
+    __syncthreads();
+
+    const int lane = static_cast<int>(threadIdx.x) & (kWarpSize - 1);
+    const auto n_sz = static_cast<size_t>(n);
+    const int stride = gridDim.x * blockDim.x;
+
+    // `base` is block-uniform so all 32 lanes reach the *_sync intrinsics together.
+    for (int base = blockIdx.x * blockDim.x; base < n; base += stride) {
+        const int idx = base + static_cast<int>(threadIdx.x);
+        const bool valid = idx < n;
+        const int best_k = valid ? assignments[idx] : -1;
+
+        const unsigned peers = __match_any_sync(kFullMask, best_k);
+        const bool is_leader = lane == (__ffs(static_cast<int>(peers)) - 1);
+        const bool writes = valid && is_leader;
+
+        if (writes) {
+            atomicAdd(&s_counts[best_k], __popc(peers));
+        }
+        for (int j = 0; j < d; ++j) {
+            const double x =
+                valid ? static_cast<double>(points[static_cast<size_t>(j) * n_sz + idx]) : 0.0;
+            const double group_sum = reduce_peers(peers, x);
+            if (writes) {
+                atomicAdd(&s_sums[best_k * d + j], group_sum);
+            }
+        }
+    }
+    __syncthreads();
+
+    // Flush: at most one global atomic per centroid coordinate (and per count) per block.
+    for (int i = threadIdx.x; i < kd; i += blockDim.x) {
+        const double v = s_sums[i];
+        if (v != 0.0) {
+            atomicAdd(&sums[i], v);
+        }
+    }
+    for (int i = threadIdx.x; i < k; i += blockDim.x) {
+        const int c = s_counts[i];
+        if (c != 0) {
+            atomicAdd(&counts[i], c);
+        }
+    }
+}
+
+// Capacity-wall fallback: one global atomic per point per coordinate.
+__global__ void accumulate_global_v4_kernel(const float *__restrict__ points,
+                                            const int *__restrict__ assignments, double *sums,
+                                            int *counts, int n, int d) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) {
+        return;
+    }
+    const int best_k = assignments[idx];
+    atomicAdd(&counts[best_k], 1);
+    double *sum_row = sums + static_cast<size_t>(best_k) * static_cast<size_t>(d);
+    for (int j = 0; j < d; ++j) {
+        const float pt_val = points[static_cast<size_t>(j) * static_cast<size_t>(n) + idx];
+        atomicAdd(&sum_row[j], static_cast<double>(pt_val));
+    }
+}
+
+__global__ void update_centroids_v4_kernel(float *centroids, const double *sums, const int *counts,
+                                           double *shift_sq_out, int d, int k) {
+    const int c = blockIdx.x * blockDim.x + threadIdx.x;
+    if (c >= k) {
+        return;
+    }
+
+    const int count = counts[c];
+    if (count == 0) {
+        // Retain previous centroid to avoid NaN on empty clusters.
+        shift_sq_out[c] = 0.0;
+        return;
+    }
+
+    const double inv_count = 1.0 / static_cast<double>(count);
+    const auto row_offset = static_cast<size_t>(c) * static_cast<size_t>(d);
+    float *ctr = centroids + row_offset;
+    const double *sum_row = sums + row_offset;
+
+    double shift_sq = 0.0;
+    for (int j = 0; j < d; ++j) {
+        const float new_val = static_cast<float>(sum_row[j] * inv_count);
+        const double diff = static_cast<double>(new_val) - static_cast<double>(ctr[j]);
+        shift_sq += diff * diff;
+        ctr[j] = new_val;
+    }
+    shift_sq_out[c] = shift_sq;
+}
+
+struct V4DeviceBuffers {
+    float *points = nullptr;
+    float *centroids = nullptr;
+    float *cnorm = nullptr;
+    float *xnorm = nullptr; // only allocated in full-expansion mode
+    double *sums = nullptr;
+    int *counts = nullptr;
+    int *assignments = nullptr;
+    double *shift_sq = nullptr;
+};
+
+struct V4LaunchPlan {
+    bool full_expansion = false;
+    bool use_shared = false;
+    size_t smem_bytes = 0;
+    int grid_n = 0;    // one thread per point
+    int grid_k = 0;    // one thread per centroid
+    int grid_gemm = 0; // one block per kTileM points
+    int grid_acc = 0;  // persistent grid for the privatized accumulation kernel
+};
+
+bool full_expansion_requested() {
+    const char *env = std::getenv("KUDA_V4_FULL_EXPANSION");
+    return env != nullptr && env[0] != '\0' && std::strcmp(env, "0") != 0;
+}
+
+V4LaunchPlan make_launch_plan(const KMeansConfig &cfg) {
+    const auto k = static_cast<size_t>(cfg.k_clusters);
+    const auto d = static_cast<size_t>(cfg.dim);
+
+    int device = 0;
+    int smem_optin = 0;
+    int sm_count = 0;
+    CHECK_CUDA(cudaGetDevice(&device));
+    CHECK_CUDA(
+        cudaDeviceGetAttribute(&smem_optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
+    CHECK_CUDA(cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device));
+
+    V4LaunchPlan plan;
+    plan.full_expansion = full_expansion_requested();
+    plan.smem_bytes = k * d * sizeof(double) + k * sizeof(int);
+    plan.use_shared = plan.smem_bytes <= static_cast<size_t>(smem_optin);
+    plan.grid_n = (cfg.n_points + kBlockSize - 1) / kBlockSize;
+    plan.grid_k = (cfg.k_clusters + kBlockSize - 1) / kBlockSize;
+    plan.grid_gemm = (cfg.n_points + kTileM - 1) / kTileM;
+    plan.grid_acc = plan.grid_n;
+
+    std::fprintf(stderr, "[v4] distance: gemm (tile %dx%dx%d, %d threads), expansion=%s\n", kTileM,
+                 kTileN, kTileK, kGemmThreads, plan.full_expansion ? "full" : "shifted");
+
+    if (plan.use_shared) {
+        if (plan.smem_bytes > kDefaultSharedLimit) {
+            CHECK_CUDA(cudaFuncSetAttribute(accumulate_privatized_v4_kernel,
+                                            cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                            static_cast<int>(plan.smem_bytes)));
+        }
+        int blocks_per_sm = 0;
+        CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &blocks_per_sm, accumulate_privatized_v4_kernel, kBlockSize, plan.smem_bytes));
+        plan.grid_acc = std::min(plan.grid_n, std::max(1, blocks_per_sm) * sm_count);
+        std::fprintf(stderr,
+                     "[v4] reduction path: shared (smem=%zu B/block, limit=%d B, grid=%d blocks)\n",
+                     plan.smem_bytes, smem_optin, plan.grid_acc);
+    } else {
+        std::fprintf(
+            stderr, "[v4] reduction path: global atomic fallback (need %zu B/block > limit %d B)\n",
+            plan.smem_bytes, smem_optin);
+    }
+    return plan;
+}
+
+void launch_assign(const V4LaunchPlan &plan, const V4DeviceBuffers &buf, const KMeansConfig &cfg) {
+    centroid_norms_v4_kernel<<<plan.grid_k, kBlockSize>>>(buf.centroids, buf.cnorm, cfg.dim,
+                                                          cfg.k_clusters);
+    CHECK_LAST_CUDA_ERROR();
+    if (plan.full_expansion) {
+        gemm_argmin_v4_kernel<true><<<plan.grid_gemm, kGemmThreads>>>(
+            buf.points, buf.centroids, buf.cnorm, buf.xnorm, buf.assignments, cfg.n_points, cfg.dim,
+            cfg.k_clusters);
+    } else {
+        gemm_argmin_v4_kernel<false><<<plan.grid_gemm, kGemmThreads>>>(
+            buf.points, buf.centroids, buf.cnorm, buf.xnorm, buf.assignments, cfg.n_points, cfg.dim,
+            cfg.k_clusters);
+    }
+    CHECK_LAST_CUDA_ERROR();
+}
+
+void launch_accumulate(const V4LaunchPlan &plan, const V4DeviceBuffers &buf,
+                       const KMeansConfig &cfg) {
+    if (plan.use_shared) {
+        accumulate_privatized_v4_kernel<<<plan.grid_acc, kBlockSize, plan.smem_bytes>>>(
+            buf.points, buf.assignments, buf.sums, buf.counts, cfg.n_points, cfg.dim,
+            cfg.k_clusters);
+    } else {
+        accumulate_global_v4_kernel<<<plan.grid_n, kBlockSize>>>(
+            buf.points, buf.assignments, buf.sums, buf.counts, cfg.n_points, cfg.dim);
+    }
+    CHECK_LAST_CUDA_ERROR();
+}
+
+void run_single_lloyd_v4(const std::vector<float> &points_soa,
+                         const std::vector<float> &init_centroids, const KMeansConfig &cfg,
+                         const V4LaunchPlan &plan, const V4DeviceBuffers &buf,
+                         std::vector<double> &h_shift_sq, std::vector<int> &assignments,
+                         std::vector<float> &centroids, int &iterations_out, bool record_timers,
+                         double &kernel_ms_out, double &e2e_ms_out, CudaTimer &kernel_timer,
+                         CudaTimer &e2e_timer) {
+    const auto n = static_cast<size_t>(cfg.n_points);
+    const auto d = static_cast<size_t>(cfg.dim);
+    const auto k = static_cast<size_t>(cfg.k_clusters);
+
+    const size_t points_bytes = n * d * sizeof(float);
+    const size_t centroids_bytes = k * d * sizeof(float);
+    const size_t sums_bytes = k * d * sizeof(double);
+    const size_t counts_bytes = k * sizeof(int);
+    const size_t assignments_bytes = n * sizeof(int);
+    const size_t shift_bytes = k * sizeof(double);
+
+    const double eps_sq = static_cast<double>(cfg.epsilon) * static_cast<double>(cfg.epsilon);
+
+    double run_kernel_ms = 0.0;
+    double run_e2e_ms = 0.0;
+    int iter_done = 0;
+
+    if (record_timers) {
+        e2e_timer.start();
+    }
+
+    CHECK_CUDA(cudaMemcpy(buf.points, points_soa.data(), points_bytes, cudaMemcpyHostToDevice));
+    CHECK_CUDA(
+        cudaMemcpy(buf.centroids, init_centroids.data(), centroids_bytes, cudaMemcpyHostToDevice));
+
+    // ||x||^2 is needed only for the full expansion; computed once per run, counted as kernel time.
+    if (plan.full_expansion) {
+        if (record_timers) {
+            kernel_timer.start();
+        }
+        point_norms_v4_kernel<<<plan.grid_n, kBlockSize>>>(buf.points, buf.xnorm, cfg.n_points,
+                                                           cfg.dim);
+        CHECK_LAST_CUDA_ERROR();
+        if (record_timers) {
+            run_kernel_ms += static_cast<double>(kernel_timer.stop_ms());
+        }
+    }
+
+    for (int iter = 0; iter < cfg.max_iters; ++iter) {
+        if (record_timers) {
+            kernel_timer.start();
+        }
+
+        CHECK_CUDA(cudaMemsetAsync(buf.sums, 0, sums_bytes, 0));
+        CHECK_CUDA(cudaMemsetAsync(buf.counts, 0, counts_bytes, 0));
+
+        launch_assign(plan, buf, cfg);
+        launch_accumulate(plan, buf, cfg);
+
+        update_centroids_v4_kernel<<<plan.grid_k, kBlockSize>>>(
+            buf.centroids, buf.sums, buf.counts, buf.shift_sq, cfg.dim, cfg.k_clusters);
+        CHECK_LAST_CUDA_ERROR();
+
+        if (record_timers) {
+            run_kernel_ms += static_cast<double>(kernel_timer.stop_ms());
+        }
+
+        CHECK_CUDA(
+            cudaMemcpy(h_shift_sq.data(), buf.shift_sq, shift_bytes, cudaMemcpyDeviceToHost));
+
+        double max_shift_sq = 0.0;
+        for (size_t c = 0; c < k; ++c) {
+            if (h_shift_sq[c] > max_shift_sq) {
+                max_shift_sq = h_shift_sq[c];
+            }
+        }
+
+        ++iter_done;
+        if (max_shift_sq < eps_sq) {
+            break;
+        }
+    }
+
+    // Final assignment pass so assignments & SSE match the returned centroids exactly.
+    if (record_timers) {
+        kernel_timer.start();
+    }
+    launch_assign(plan, buf, cfg);
+    if (record_timers) {
+        run_kernel_ms += static_cast<double>(kernel_timer.stop_ms());
+    }
+
+    CHECK_CUDA(
+        cudaMemcpy(centroids.data(), buf.centroids, centroids_bytes, cudaMemcpyDeviceToHost));
+    CHECK_CUDA(
+        cudaMemcpy(assignments.data(), buf.assignments, assignments_bytes, cudaMemcpyDeviceToHost));
+
+    if (record_timers) {
+        run_e2e_ms = static_cast<double>(e2e_timer.stop_ms());
+    }
+
+    iterations_out = iter_done;
+    kernel_ms_out = run_kernel_ms;
+    e2e_ms_out = run_e2e_ms;
+}
+
+} // namespace
+
+KMeansResult run_kmeans_v4(const std::vector<float> &points,
+                           const std::vector<float> &init_centroids, const KMeansConfig &cfg) {
+    const auto n = static_cast<size_t>(cfg.n_points);
+    const auto d = static_cast<size_t>(cfg.dim);
+    const auto k = static_cast<size_t>(cfg.k_clusters);
+
+    // Transpose row-major AoS points into Structure-of-Arrays (SoA) layout (D x N), as in V2/V3.
+    std::vector<float> points_soa(n * d);
+    for (size_t idx = 0; idx < n; ++idx) {
+        for (size_t j = 0; j < d; ++j) {
+            points_soa[j * n + idx] = points[idx * d + j];
+        }
+    }
+
+    const V4LaunchPlan plan = make_launch_plan(cfg);
+
+    V4DeviceBuffers buf;
+    CHECK_CUDA(cudaMalloc(&buf.points, n * d * sizeof(float)));
+    CHECK_CUDA(cudaMalloc(&buf.centroids, k * d * sizeof(float)));
+    CHECK_CUDA(cudaMalloc(&buf.cnorm, k * sizeof(float)));
+    if (plan.full_expansion) {
+        CHECK_CUDA(cudaMalloc(&buf.xnorm, n * sizeof(float)));
+    }
+    CHECK_CUDA(cudaMalloc(&buf.sums, k * d * sizeof(double)));
+    CHECK_CUDA(cudaMalloc(&buf.counts, k * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&buf.assignments, n * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&buf.shift_sq, k * sizeof(double)));
+
+    KMeansResult res;
+    res.assignments.resize(n);
+    res.centroids.resize(k * d);
+    std::vector<double> h_shift_sq(k, 0.0);
+
+    CudaTimer kernel_timer;
+    CudaTimer e2e_timer;
+
+    // Warm-up runs (untimed).
+    for (int w = 0; w < cfg.warmup_runs; ++w) {
+        double dummy_kernel_ms = 0.0;
+        double dummy_e2e_ms = 0.0;
+        run_single_lloyd_v4(points_soa, init_centroids, cfg, plan, buf, h_shift_sq, res.assignments,
+                            res.centroids, res.iterations, false, dummy_kernel_ms, dummy_e2e_ms,
+                            kernel_timer, e2e_timer);
+    }
+
+    // Timed benchmark runs.
+    double total_kernel_ms = 0.0;
+    double total_e2e_ms = 0.0;
+    for (int r = 0; r < cfg.bench_runs; ++r) {
+        double run_kernel_ms = 0.0;
+        double run_e2e_ms = 0.0;
+        run_single_lloyd_v4(points_soa, init_centroids, cfg, plan, buf, h_shift_sq, res.assignments,
+                            res.centroids, res.iterations, true, run_kernel_ms, run_e2e_ms,
+                            kernel_timer, e2e_timer);
+        total_kernel_ms += run_kernel_ms;
+        total_e2e_ms += run_e2e_ms;
+    }
+
+    CHECK_CUDA(cudaFree(buf.shift_sq));
+    CHECK_CUDA(cudaFree(buf.assignments));
+    CHECK_CUDA(cudaFree(buf.counts));
+    CHECK_CUDA(cudaFree(buf.sums));
+    if (buf.xnorm != nullptr) {
+        CHECK_CUDA(cudaFree(buf.xnorm));
+    }
+    CHECK_CUDA(cudaFree(buf.cnorm));
+    CHECK_CUDA(cudaFree(buf.centroids));
+    CHECK_CUDA(cudaFree(buf.points));
+
+    res.kernel_ms = total_kernel_ms / static_cast<double>(cfg.bench_runs);
+    res.e2e_ms = total_e2e_ms / static_cast<double>(cfg.bench_runs);
+    res.sse = compute_sse(points, res.centroids, res.assignments, cfg.n_points, cfg.dim);
+    return res;
+}
+
+KUDA_REGISTER_GPU_RUNNER("v4", kuda::run_kmeans_v4);
+
+} // namespace kuda
