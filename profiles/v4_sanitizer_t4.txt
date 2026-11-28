@@ -1,0 +1,33 @@
+# V4 compute-sanitizer results — Tesla T4 (sm_75, CUDA 13.0), Google Colab, commit 65222e1
+#
+# (1) Small dataset (no close calls, so the exact re-rank path is not entered):
+#   for t in memcheck racecheck synccheck; do compute-sanitizer --tool $t ./bin/kuda_means_gpu \
+#     --version v4 -n 4099 -d 20 -k 70 --max-iters 3 --warmup 0 --runs 1; done
+== memcheck
+[v4] distance: gemm (tile 64x64x16, 256 threads), expansion=shifted, exact_rerank=close_calls
+[v4] reduction path: shared (smem=11480 B/block, limit=65536 B, grid=17 blocks)
+[v4] exact re-rank (final assignment pass): 0 of 4099 points (0.0000%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+========= ERROR SUMMARY: 0 errors
+== racecheck
+[v4] distance: gemm (tile 64x64x16, 256 threads), expansion=shifted, exact_rerank=close_calls
+[v4] reduction path: shared (smem=11480 B/block, limit=65536 B, grid=17 blocks)
+[v4] exact re-rank (final assignment pass): 0 of 4099 points (0.0000%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+========= RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
+== synccheck
+[v4] distance: gemm (tile 64x64x16, 256 threads), expansion=shifted, exact_rerank=close_calls
+[v4] reduction path: shared (smem=11480 B/block, limit=65536 B, grid=17 blocks)
+[v4] exact re-rank (final assignment pass): 0 of 4099 points (0.0000%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+========= ERROR SUMMARY: 0 errors
+
+# (2) Dataset with close calls, to cover the exact re-rank path (global reads only, no shared
+#     memory or barriers, so memcheck is the relevant tool):
+#   compute-sanitizer --tool memcheck ./bin/kuda_means_gpu --version v4 -n 20000 -d 128 -k 64 \
+#     --max-iters 2 --warmup 0 --runs 1
+[v4] distance: gemm (tile 64x64x16, 256 threads), expansion=shifted, exact_rerank=close_calls
+[v4] reduction path: global atomic fallback (need 65792 B/block > limit 65536 B)
+[v4] exact re-rank (final assignment pass): 212 of 20000 points (1.0600%)
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+========= ERROR SUMMARY: 0 errors
