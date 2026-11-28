@@ -2,7 +2,7 @@
 
 **Unit Name:** `v2-memory-tuning`  
 **GitHub Issue:** [#10 - [3.1] Implement V2 kernel (src/v2_memory/) with SoA layout, __constant__ centroids, and 64 KB limit handling](https://github.com/khemingkapat/kuda_means/issues/10)  
-**Status:** `approved`  
+**Status:** `tests-locked`  
 
 ---
 
