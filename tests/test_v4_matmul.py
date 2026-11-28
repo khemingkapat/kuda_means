@@ -33,6 +33,7 @@ VERIFY_RE = re.compile(
     r"max_centroid_abs_diff=([0-9.eE+-]+)\s+sse_rel_diff=([0-9.eE+-]+)"
 )
 MODE_RE = re.compile(r"\[v4\]\s+distance:\s+gemm.*expansion=(shifted|full)")
+RERANK_RE = re.compile(r"\[v4\]\s+distance:\s+gemm.*exact_rerank=(top2|off)")
 
 
 def _read_v4_source() -> str:
@@ -42,7 +43,12 @@ def _read_v4_source() -> str:
 
 
 def _run_v4(
-    n: int, d: int, k: int, max_iters: int, full_expansion: bool = False
+    n: int,
+    d: int,
+    k: int,
+    max_iters: int,
+    full_expansion: bool = False,
+    rerank: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     args = [
         str(GPU_BIN),
@@ -62,9 +68,8 @@ def _run_v4(
         "1",
     ]
     env = dict(os.environ)
-    env.pop("KUDA_V4_FULL_EXPANSION", None)
-    if full_expansion:
-        env["KUDA_V4_FULL_EXPANSION"] = "1"
+    env["KUDA_V4_FULL_EXPANSION"] = "1" if full_expansion else "0"
+    env["KUDA_V4_EXACT_RERANK"] = "1" if rerank else "0"
     return subprocess.run(args, cwd=REPO_ROOT, capture_output=True, text=True, env=env)
 
 
@@ -82,6 +87,11 @@ def _parse_verify(stdout: str) -> dict[str, Any]:
 
 def _expansion_mode(stderr: str) -> str | None:
     match = MODE_RE.search(stderr)
+    return match.group(1) if match else None
+
+
+def _rerank_mode(stderr: str) -> str | None:
+    match = RERANK_RE.search(stderr)
     return match.group(1) if match else None
 
 
@@ -124,6 +134,8 @@ class TestV4MatMul(unittest.TestCase):
         self.assertIn("centroid_norms_v4_kernel", src, "Missing ||c||^2 precompute kernel")
         self.assertIn("point_norms_v4_kernel", src, "Missing ||x||^2 precompute kernel")
         self.assertIn("KUDA_V4_FULL_EXPANSION", src, "Missing full-expansion (cancellation) mode")
+        self.assertIn("KUDA_V4_EXACT_RERANK", src, "Missing exact top-2 re-rank switch")
+        self.assertIn("exact_dist_sq", src, "Missing exact (x - c)^2 re-scoring")
 
     def test_ac1_empty_cluster_safety(self) -> None:
         """AC1: Centroid update guards empty clusters."""
@@ -153,26 +165,30 @@ class TestV4MatMul(unittest.TestCase):
     # =========================================================================
 
     def test_ac2_small_regime_cpu_verification(self) -> None:
-        """AC2: N=100000, D=16, K=8 matches the V0 CPU baseline (shifted distance)."""
+        """AC2: N=100000, D=16, K=8, 50 iterations matches V0 (shifted + exact top-2 re-rank)."""
         self._require_gpu()
         res = _run_v4(100000, 16, 8, 50)
         self._assert_verified(res)
         self.assertEqual(_expansion_mode(res.stderr), "shifted", res.stderr)
+        self.assertEqual(_rerank_mode(res.stderr), "top2", res.stderr)
 
     # =========================================================================
     # AC3: Large regime + cancellation check
     # =========================================================================
 
-    def test_ac3_large_regime_shifted(self) -> None:
-        """AC3: D=128, K=64 verifies with the shifted distance."""
+    def test_ac3_large_regime_verifies(self) -> None:
+        """AC3: D=128, K=64 verifies in both expansions with the exact top-2 re-rank."""
         self._require_gpu()
-        self._assert_verified(_run_v4(20000, 128, 64, 10))
+        for full in (False, True):
+            with self.subTest(full_expansion=full):
+                self._assert_verified(_run_v4(20000, 128, 64, 10, full_expansion=full))
 
-    def test_ac3_large_regime_full_expansion_reports_mismatches(self) -> None:
-        """AC3: Full expansion runs and reports its mismatch count (cancellation check)."""
+    def test_ac3_raw_gemm_reports_cancellation_mismatches(self) -> None:
+        """AC3: With re-rank off, the raw GEMM ranking still runs and reports its mismatches."""
         self._require_gpu()
-        res = _run_v4(20000, 128, 64, 10, full_expansion=True)
+        res = _run_v4(20000, 128, 64, 10, full_expansion=True, rerank=False)
         self.assertEqual(_expansion_mode(res.stderr), "full", res.stderr)
+        self.assertEqual(_rerank_mode(res.stderr), "off", res.stderr)
         metrics = _parse_verify(res.stdout)
         self.assertIn("assignment_mismatches", metrics, f"No [verify] line:\n{res.stdout}")
 

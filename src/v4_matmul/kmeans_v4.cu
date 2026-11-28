@@ -12,8 +12,11 @@
 // ||x||^2 is constant per point and does not change the argmin, so by default centroids are ranked
 // by the shifted distance ||c||^2 - 2 x.c. Setting KUDA_V4_FULL_EXPANSION=1 ranks by the full
 // float expansion instead, to measure floating-point cancellation against V0.
-// Accumulation reuses V3's privatized shared-memory reduction (global-atomic fallback when the
-// accumulators do not fit). Centroids are read with __ldg (see docs/v2_analysis.md).
+// Either form loses precision when ||x||, ||c|| >> ||x - c|| (cancellation), which flipped a few
+// near-tie assignments vs. V0. By default the GEMM keeps each point's top-2 candidates and
+// re-scores them with the exact (x - c)^2 form (KUDA_V4_EXACT_RERANK=0 disables this to expose the
+// raw error). Accumulation reuses V3's privatized shared-memory reduction (global-atomic fallback
+// when the accumulators do not fit). Centroids are read with __ldg (see docs/v2_analysis.md).
 
 #include "cuda_utils.cuh"
 #include "kmeans_common.h"
@@ -21,6 +24,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <climits>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -49,6 +53,7 @@ constexpr int kThreadsX = kTileN / kMicro;          // 16 threads across centroi
 constexpr int kThreadsY = kTileM / kMicro;          // 16 threads across points
 constexpr int kGemmThreads = kThreadsX * kThreadsY; // 256
 constexpr int kCentroidPad = 4;                     // keeps float4 alignment, staggers banks
+constexpr int kNoCentroid = INT_MAX;                // empty top-2 slot
 
 static_assert(kBlockSize % kWarpSize == 0, "Block size must be a whole number of warps");
 static_assert(kThreadsX == 16, "Argmin reduction assumes 16 lanes share one point row");
@@ -82,8 +87,30 @@ __global__ void centroid_norms_v4_kernel(const float *__restrict__ centroids, fl
     cnorm[c] = s;
 }
 
-// Tiled GEMM (X * C^T) fused with argmin. Ties resolve to the lowest centroid index, like V0.
-template <bool FullExpansion>
+// Strict ranking on (distance, centroid index): lower distance first, ties to the lower index
+// (the same first-minimum rule as V0's ascending scan).
+__device__ __forceinline__ bool ranks_before(float a, int ka, float b, int kb) {
+    return a < b || (a == b && ka < kb);
+}
+
+// Exact squared distance in the same form as V0-V3 (accumulate diff * diff), used to re-rank.
+__device__ __forceinline__ float exact_dist_sq(const float *__restrict__ points,
+                                               const float *__restrict__ centroids, int p, int c,
+                                               int n, int d) {
+    const float *ctr = centroids + static_cast<size_t>(c) * static_cast<size_t>(d);
+    float dist_sq = 0.0f;
+    for (int j = 0; j < d; ++j) {
+        const float diff =
+            points[static_cast<size_t>(j) * static_cast<size_t>(n) + p] - __ldg(&ctr[j]);
+        dist_sq += diff * diff;
+    }
+    return dist_sq;
+}
+
+// Tiled GEMM (X * C^T) fused with a top-2 argmin. The expansion loses precision when ||x||, ||c||
+// are large relative to ||x - c|| (cancellation), so with Rerank the two best GEMM candidates are
+// re-scored with the exact (x - c)^2 form before the final choice.
+template <bool FullExpansion, bool Rerank>
 __global__ void __launch_bounds__(kGemmThreads)
     gemm_argmin_v4_kernel(const float *__restrict__ points, const float *__restrict__ centroids,
                           const float *__restrict__ cnorm, const float *__restrict__ xnorm,
@@ -98,13 +125,18 @@ __global__ void __launch_bounds__(kGemmThreads)
     const auto n_sz = static_cast<size_t>(n);
     const auto d_sz = static_cast<size_t>(d);
 
-    float best[kMicro];
-    int best_k[kMicro];
+    // Per point row: best and second-best (distance, centroid) seen by this thread.
+    float best1[kMicro];
+    float best2[kMicro];
+    int best1_k[kMicro];
+    int best2_k[kMicro];
     float x_norm[kMicro];
 #pragma unroll
     for (int i = 0; i < kMicro; ++i) {
-        best[i] = FLT_MAX;
-        best_k[i] = 0;
+        best1[i] = FLT_MAX;
+        best2[i] = FLT_MAX;
+        best1_k[i] = kNoCentroid;
+        best2_k[i] = kNoCentroid;
         x_norm[i] = 0.0f;
         if constexpr (FullExpansion) {
             const int p = p0 + ty * kMicro + i;
@@ -174,32 +206,76 @@ __global__ void __launch_bounds__(kGemmThreads)
                     } else {
                         dist = cn - 2.0f * acc[i][j];
                     }
-                    if (dist < best[i]) {
-                        best[i] = dist;
-                        best_k[i] = c;
+                    if (ranks_before(dist, c, best1[i], best1_k[i])) {
+                        best2[i] = best1[i];
+                        best2_k[i] = best1_k[i];
+                        best1[i] = dist;
+                        best1_k[i] = c;
+                    } else if (ranks_before(dist, c, best2[i], best2_k[i])) {
+                        best2[i] = dist;
+                        best2_k[i] = c;
                     }
                 }
             }
         }
     }
 
-    // Reduce each point row across the 16 lanes (tx) that hold its centroid candidates.
+    // Merge each point row's top-2 across the 16 lanes (tx) with an xor butterfly; lanes hold
+    // disjoint centroid sets, so every lane ends with the same global top-2.
+    int top_k[kMicro];
+    int second_k[kMicro];
 #pragma unroll
     for (int i = 0; i < kMicro; ++i) {
-        float v = best[i];
-        int bk = best_k[i];
+        float v1 = best1[i];
+        float v2 = best2[i];
+        int k1 = best1_k[i];
+        int k2 = best2_k[i];
 #pragma unroll
         for (int offset = kThreadsX / 2; offset > 0; offset >>= 1) {
-            const float other_v = __shfl_xor_sync(kFullMask, v, offset);
-            const int other_k = __shfl_xor_sync(kFullMask, bk, offset);
-            if (other_v < v || (other_v == v && other_k < bk)) {
-                v = other_v;
-                bk = other_k;
+            const float o1 = __shfl_xor_sync(kFullMask, v1, offset);
+            const int ok1 = __shfl_xor_sync(kFullMask, k1, offset);
+            const float o2 = __shfl_xor_sync(kFullMask, v2, offset);
+            const int ok2 = __shfl_xor_sync(kFullMask, k2, offset);
+            if (ranks_before(v1, k1, o1, ok1)) {
+                // Mine stays first; second is the better of my second and their first.
+                if (ranks_before(o1, ok1, v2, k2)) {
+                    v2 = o1;
+                    k2 = ok1;
+                }
+            } else {
+                // Theirs becomes first; second is the better of my first and their second.
+                if (ranks_before(v1, k1, o2, ok2)) {
+                    v2 = v1;
+                    k2 = k1;
+                } else {
+                    v2 = o2;
+                    k2 = ok2;
+                }
+                v1 = o1;
+                k1 = ok1;
             }
         }
+        top_k[i] = k1;
+        second_k[i] = k2;
+    }
+
+    // Lanes tx = 0..3 each finalize one of the row's 4 points (spreads the exact re-rank work).
+#pragma unroll
+    for (int i = 0; i < kMicro; ++i) {
         const int p = p0 + ty * kMicro + i;
-        if (tx == 0 && p < n) {
-            assignments[p] = bk;
+        if (tx == i && p < n) {
+            int choice = top_k[i];
+            if constexpr (Rerank) {
+                const int alt = second_k[i];
+                if (alt != kNoCentroid) {
+                    const float e1 = exact_dist_sq(points, centroids, p, choice, n, d);
+                    const float e2 = exact_dist_sq(points, centroids, p, alt, n, d);
+                    if (ranks_before(e2, alt, e1, choice)) {
+                        choice = alt;
+                    }
+                }
+            }
+            assignments[p] = choice;
         }
     }
 }
@@ -341,6 +417,7 @@ struct V4DeviceBuffers {
 
 struct V4LaunchPlan {
     bool full_expansion = false;
+    bool rerank = true;
     bool use_shared = false;
     size_t smem_bytes = 0;
     int grid_n = 0;    // one thread per point
@@ -349,9 +426,13 @@ struct V4LaunchPlan {
     int grid_acc = 0;  // persistent grid for the privatized accumulation kernel
 };
 
-bool full_expansion_requested() {
-    const char *env = std::getenv("KUDA_V4_FULL_EXPANSION");
-    return env != nullptr && env[0] != '\0' && std::strcmp(env, "0") != 0;
+// Reads a 0/1 switch from the environment; unset or empty keeps the default.
+bool env_flag(const char *name, bool default_value) {
+    const char *env = std::getenv(name);
+    if (env == nullptr || env[0] == '\0') {
+        return default_value;
+    }
+    return std::strcmp(env, "0") != 0;
 }
 
 V4LaunchPlan make_launch_plan(const KMeansConfig &cfg) {
@@ -367,7 +448,8 @@ V4LaunchPlan make_launch_plan(const KMeansConfig &cfg) {
     CHECK_CUDA(cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device));
 
     V4LaunchPlan plan;
-    plan.full_expansion = full_expansion_requested();
+    plan.full_expansion = env_flag("KUDA_V4_FULL_EXPANSION", false);
+    plan.rerank = env_flag("KUDA_V4_EXACT_RERANK", true);
     plan.smem_bytes = k * d * sizeof(double) + k * sizeof(int);
     plan.use_shared = plan.smem_bytes <= static_cast<size_t>(smem_optin);
     plan.grid_n = (cfg.n_points + kBlockSize - 1) / kBlockSize;
@@ -375,8 +457,10 @@ V4LaunchPlan make_launch_plan(const KMeansConfig &cfg) {
     plan.grid_gemm = (cfg.n_points + kTileM - 1) / kTileM;
     plan.grid_acc = plan.grid_n;
 
-    std::fprintf(stderr, "[v4] distance: gemm (tile %dx%dx%d, %d threads), expansion=%s\n", kTileM,
-                 kTileN, kTileK, kGemmThreads, plan.full_expansion ? "full" : "shifted");
+    std::fprintf(stderr,
+                 "[v4] distance: gemm (tile %dx%dx%d, %d threads), expansion=%s, exact_rerank=%s\n",
+                 kTileM, kTileN, kTileK, kGemmThreads, plan.full_expansion ? "full" : "shifted",
+                 plan.rerank ? "top2" : "off");
 
     if (plan.use_shared) {
         if (plan.smem_bytes > kDefaultSharedLimit) {
@@ -399,18 +483,27 @@ V4LaunchPlan make_launch_plan(const KMeansConfig &cfg) {
     return plan;
 }
 
+template <bool FullExpansion>
+void launch_gemm(const V4LaunchPlan &plan, const V4DeviceBuffers &buf, const KMeansConfig &cfg) {
+    if (plan.rerank) {
+        gemm_argmin_v4_kernel<FullExpansion, true><<<plan.grid_gemm, kGemmThreads>>>(
+            buf.points, buf.centroids, buf.cnorm, buf.xnorm, buf.assignments, cfg.n_points, cfg.dim,
+            cfg.k_clusters);
+    } else {
+        gemm_argmin_v4_kernel<FullExpansion, false><<<plan.grid_gemm, kGemmThreads>>>(
+            buf.points, buf.centroids, buf.cnorm, buf.xnorm, buf.assignments, cfg.n_points, cfg.dim,
+            cfg.k_clusters);
+    }
+}
+
 void launch_assign(const V4LaunchPlan &plan, const V4DeviceBuffers &buf, const KMeansConfig &cfg) {
     centroid_norms_v4_kernel<<<plan.grid_k, kBlockSize>>>(buf.centroids, buf.cnorm, cfg.dim,
                                                           cfg.k_clusters);
     CHECK_LAST_CUDA_ERROR();
     if (plan.full_expansion) {
-        gemm_argmin_v4_kernel<true><<<plan.grid_gemm, kGemmThreads>>>(
-            buf.points, buf.centroids, buf.cnorm, buf.xnorm, buf.assignments, cfg.n_points, cfg.dim,
-            cfg.k_clusters);
+        launch_gemm<true>(plan, buf, cfg);
     } else {
-        gemm_argmin_v4_kernel<false><<<plan.grid_gemm, kGemmThreads>>>(
-            buf.points, buf.centroids, buf.cnorm, buf.xnorm, buf.assignments, cfg.n_points, cfg.dim,
-            cfg.k_clusters);
+        launch_gemm<false>(plan, buf, cfg);
     }
     CHECK_LAST_CUDA_ERROR();
 }
