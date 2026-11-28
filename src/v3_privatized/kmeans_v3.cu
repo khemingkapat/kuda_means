@@ -96,8 +96,8 @@ __device__ __forceinline__ double reduce_peers(unsigned peers, double x) {
 
 template <bool UseConstant>
 __global__ void accumulate_privatized_v3_kernel(const float *__restrict__ points,
-                                                const float *__restrict__ d_centroids,
-                                                double *sums, int *counts, int n, int d, int k) {
+                                                const float *__restrict__ d_centroids, double *sums,
+                                                int *counts, int n, int d, int k) {
     extern __shared__ double s_mem[];
     const int kd = k * d;
     double *s_sums = s_mem;
@@ -232,8 +232,7 @@ struct V3LaunchPlan {
     int grid_acc = 0; // persistent grid for the privatized accumulation kernel
 };
 
-template <bool UseConstant>
-int persistent_grid(size_t smem_bytes, int grid_n, int sm_count) {
+template <bool UseConstant> int persistent_grid(size_t smem_bytes, int grid_n, int sm_count) {
     if (smem_bytes > kDefaultSharedLimit) {
         CHECK_CUDA(cudaFuncSetAttribute(accumulate_privatized_v3_kernel<UseConstant>,
                                         cudaFuncAttributeMaxDynamicSharedMemorySize,
@@ -296,13 +295,13 @@ void launch_accumulate(const V3LaunchPlan &plan, const V3DeviceBuffers &buf,
         }
     } else {
         if (plan.use_constant) {
-            accumulate_global_v3_kernel<true><<<plan.grid_n, kBlockSize>>>(
-                buf.points, buf.centroids, buf.sums, buf.counts, cfg.n_points, cfg.dim,
-                cfg.k_clusters);
+            accumulate_global_v3_kernel<true>
+                <<<plan.grid_n, kBlockSize>>>(buf.points, buf.centroids, buf.sums, buf.counts,
+                                              cfg.n_points, cfg.dim, cfg.k_clusters);
         } else {
-            accumulate_global_v3_kernel<false><<<plan.grid_n, kBlockSize>>>(
-                buf.points, buf.centroids, buf.sums, buf.counts, cfg.n_points, cfg.dim,
-                cfg.k_clusters);
+            accumulate_global_v3_kernel<false>
+                <<<plan.grid_n, kBlockSize>>>(buf.points, buf.centroids, buf.sums, buf.counts,
+                                              cfg.n_points, cfg.dim, cfg.k_clusters);
         }
     }
     CHECK_LAST_CUDA_ERROR();
@@ -407,8 +406,8 @@ void run_single_lloyd_v3(const std::vector<float> &points_soa,
 
     CHECK_CUDA(
         cudaMemcpy(centroids.data(), buf.centroids, centroids_bytes, cudaMemcpyDeviceToHost));
-    CHECK_CUDA(cudaMemcpy(assignments.data(), buf.assignments, assignments_bytes,
-                          cudaMemcpyDeviceToHost));
+    CHECK_CUDA(
+        cudaMemcpy(assignments.data(), buf.assignments, assignments_bytes, cudaMemcpyDeviceToHost));
 
     if (record_timers) {
         run_e2e_ms = static_cast<double>(e2e_timer.stop_ms());
@@ -457,9 +456,9 @@ KMeansResult run_kmeans_v3(const std::vector<float> &points,
     for (int w = 0; w < cfg.warmup_runs; ++w) {
         double dummy_kernel_ms = 0.0;
         double dummy_e2e_ms = 0.0;
-        run_single_lloyd_v3(points_soa, init_centroids, cfg, plan, buf, h_shift_sq,
-                            res.assignments, res.centroids, res.iterations, false, dummy_kernel_ms,
-                            dummy_e2e_ms, kernel_timer, e2e_timer);
+        run_single_lloyd_v3(points_soa, init_centroids, cfg, plan, buf, h_shift_sq, res.assignments,
+                            res.centroids, res.iterations, false, dummy_kernel_ms, dummy_e2e_ms,
+                            kernel_timer, e2e_timer);
     }
 
     // Timed benchmark runs.
@@ -468,9 +467,9 @@ KMeansResult run_kmeans_v3(const std::vector<float> &points,
     for (int r = 0; r < cfg.bench_runs; ++r) {
         double run_kernel_ms = 0.0;
         double run_e2e_ms = 0.0;
-        run_single_lloyd_v3(points_soa, init_centroids, cfg, plan, buf, h_shift_sq,
-                            res.assignments, res.centroids, res.iterations, true, run_kernel_ms,
-                            run_e2e_ms, kernel_timer, e2e_timer);
+        run_single_lloyd_v3(points_soa, init_centroids, cfg, plan, buf, h_shift_sq, res.assignments,
+                            res.centroids, res.iterations, true, run_kernel_ms, run_e2e_ms,
+                            kernel_timer, e2e_timer);
         total_kernel_ms += run_kernel_ms;
         total_e2e_ms += run_e2e_ms;
     }
