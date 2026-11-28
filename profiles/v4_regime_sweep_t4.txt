@@ -1,0 +1,60 @@
+[kuda_means] version=v3 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=8 iters=10 sse=60094443.4548 kernel_ms=30.7583 e2e_ms=46.2603 ms_per_iter=3.0758
+-- v4 rerank=1
+[v4] exact re-rank (final assignment pass): 592 of 1000000 points (0.0592%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=8 iters=10 sse=60094443.4548 kernel_ms=31.4921 e2e_ms=47.1667 ms_per_iter=3.1492
+-- v4 rerank=all
+[v4] exact re-rank (final assignment pass): 1000000 of 1000000 points (100.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=8 iters=10 sse=60094443.4548 kernel_ms=49.5159 e2e_ms=68.0993 ms_per_iter=4.9516
+-- v4 rerank=0
+[v4] exact re-rank (final assignment pass): 0 of 1000000 points (0.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=8 iters=10 sse=60094444.1046 kernel_ms=26.8744 e2e_ms=42.8207 ms_per_iter=2.6874
+[kuda_means] version=v3 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=64 iters=10 sse=58492534.1269 kernel_ms=57.6645 e2e_ms=74.6449 ms_per_iter=5.7664
+-- v4 rerank=1
+[v4] exact re-rank (final assignment pass): 669 of 1000000 points (0.0669%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=64 iters=10 sse=58492534.1269 kernel_ms=48.5130 e2e_ms=63.7561 ms_per_iter=4.8513
+-- v4 rerank=all
+[v4] exact re-rank (final assignment pass): 1000000 of 1000000 points (100.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=64 iters=10 sse=58492534.1269 kernel_ms=67.3910 e2e_ms=82.9555 ms_per_iter=6.7391
+-- v4 rerank=0
+[v4] exact re-rank (final assignment pass): 0 of 1000000 points (0.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=64 iters=10 sse=58492531.4874 kernel_ms=43.9274 e2e_ms=70.8395 ms_per_iter=4.3927
+[kuda_means] version=v3 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=256 iters=10 sse=50925445.5129 kernel_ms=151.8591 e2e_ms=167.5064 ms_per_iter=15.1859
+-- v4 rerank=1
+[v4] exact re-rank (final assignment pass): 591 of 1000000 points (0.0591%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=256 iters=10 sse=50925445.5129 kernel_ms=95.7565 e2e_ms=111.7651 ms_per_iter=9.5757
+-- v4 rerank=all
+[v4] exact re-rank (final assignment pass): 1000000 of 1000000 points (100.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=256 iters=10 sse=50925445.5129 kernel_ms=112.4238 e2e_ms=128.0650 ms_per_iter=11.2424
+-- v4 rerank=0
+[v4] exact re-rank (final assignment pass): 0 of 1000000 points (0.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=16 K=256 iters=10 sse=50925441.7766 kernel_ms=85.9721 e2e_ms=101.2616 ms_per_iter=8.5972
+[kuda_means] version=v3 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=8 iters=10 sse=1128677588.4895 kernel_ms=206.6667 e2e_ms=323.4096 ms_per_iter=20.6667
+-- v4 rerank=1
+[v4] exact re-rank (final assignment pass): 63532 of 1000000 points (6.3532%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=8 iters=10 sse=1128677588.4895 kernel_ms=253.4171 e2e_ms=368.1520 ms_per_iter=25.3417
+-- v4 rerank=all
+[v4] exact re-rank (final assignment pass): 1000000 of 1000000 points (100.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=8 iters=10 sse=1128677588.4895 kernel_ms=434.8224 e2e_ms=546.4917 ms_per_iter=43.4822
+-- v4 rerank=0
+[v4] exact re-rank (final assignment pass): 0 of 1000000 points (0.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=8 iters=10 sse=1128677588.1211 kernel_ms=213.6237 e2e_ms=327.2990 ms_per_iter=21.3624
+[kuda_means] version=v3 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=64 iters=10 sse=1045596268.4440 kernel_ms=1730.5963 e2e_ms=1859.7843 ms_per_iter=173.0596
+-- v4 rerank=1
+[v4] exact re-rank (final assignment pass): 33611 of 1000000 points (3.3611%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=64 iters=10 sse=1045596268.4440 kernel_ms=177.4254 e2e_ms=290.4678 ms_per_iter=17.7425
+-- v4 rerank=all
+[v4] exact re-rank (final assignment pass): 1000000 of 1000000 points (100.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=64 iters=10 sse=1045596268.4440 kernel_ms=385.4197 e2e_ms=504.7554 ms_per_iter=38.5420
+-- v4 rerank=0
+[v4] exact re-rank (final assignment pass): 0 of 1000000 points (0.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=64 iters=10 sse=1045596261.6514 kernel_ms=150.9823 e2e_ms=267.2899 ms_per_iter=15.0982
+[kuda_means] version=v3 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=256 iters=10 sse=849372227.9380 kernel_ms=6956.8026 e2e_ms=7070.7049 ms_per_iter=695.6803
+-- v4 rerank=1
+[v4] exact re-rank (final assignment pass): 18954 of 1000000 points (1.8954%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=256 iters=10 sse=849372227.9380 kernel_ms=413.1185 e2e_ms=525.5971 ms_per_iter=41.3119
+-- v4 rerank=all
+[v4] exact re-rank (final assignment pass): 1000000 of 1000000 points (100.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=256 iters=10 sse=849372227.9380 kernel_ms=629.2939 e2e_ms=742.7574 ms_per_iter=62.9294
+-- v4 rerank=0
+[v4] exact re-rank (final assignment pass): 0 of 1000000 points (0.0000%)
+[kuda_means] version=v4 hw="Tesla T4" commit=65222e1 N=1000000 D=128 K=256 iters=10 sse=849372207.6045 kernel_ms=381.1892 e2e_ms=493.8320 ms_per_iter=38.1189
