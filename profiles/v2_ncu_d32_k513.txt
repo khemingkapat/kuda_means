@@ -1,0 +1,68 @@
+==PROF== Connected to process 35872 (/content/kuda_means/kuda_means/kuda_means/bin/kuda_means_gpu)
+==PROF== Profiling "assign_v2_kernel" - 0 (1/1): 0%....50%....100% - 13 passes
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=100000 D=32 K=513 iters=1 sse=21222402.3316 kernel_ms=4474.6878 e2e_ms=4480.4902 ms_per_iter=4474.6878
+==PROF== Disconnected from process 35872
+[35872] kuda_means_gpu@127.0.0.1
+  void unnamed>::assign_v2_kernel<1, 0>(const float *, const float *, double *, int *, int *, int, int, int) (391, 1, 1)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 7.5
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         4.99
+    SM Frequency                    Mhz       585.00
+    Elapsed Cycles                cycle    6,302,838
+    Memory Throughput                 %        81.76
+    DRAM Throughput                   %         5.93
+    Duration                         ms        10.77
+    L1/TEX Cache Throughput           %        84.52
+    L2 Cache Throughput               %        36.10
+    SM Active Cycles              cycle 6,126,490.62
+    Compute (SM) Throughput           %        81.76
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing workloads in the Compute Workload Analysis section.                                        
+
+    Section: Memory Workload Analysis
+    -------------------------------------- ----------- ------------
+    Metric Name                            Metric Unit Metric Value
+    -------------------------------------- ----------- ------------
+    Local Memory Spilling Requests                                0
+    Local Memory Spilling Request Overhead           %      no data
+    Memory Throughput                          Gbyte/s        18.95
+    Mem Busy                                         %        42.26
+    Max Bandwidth                                    %        81.76
+    L1/TEX Hit Rate                                  %        59.04
+    L2 Hit Rate                                      %        96.19
+    Mem Pipes Busy                                   %        81.76
+    -------------------------------------- ----------- ------------
+
+    Section: Warp State Statistics
+    ---------------------------------------- ----------- ------------
+    Metric Name                              Metric Unit Metric Value
+    ---------------------------------------- ----------- ------------
+    Warp Cycles Per Issued Instruction             cycle        20.31
+    Warp Cycles Per Executed Instruction           cycle        20.31
+    Avg. Active Threads Per Warp                                   32
+    Avg. Not Predicated Off Threads Per Warp                    31.24
+    ---------------------------------------- ----------- ------------
+
+    WRN   The optional metric smsp__pcsamp_sample_count could not be found. Collecting it as an additional metric could 
+          enable the rule to provide more guidance.                                                                     
+    ----- --------------------------------------------------------------------------------------------------------------
+    OPT   Est. Local Speedup: 66.09%                                                                                    
+          On average, each warp of this workload spends 13.4 cycles being stalled waiting for the L1 instruction queue  
+          for local and global (LG) memory operations to be not full. Typically, this stall occurs only when executing  
+          local or global memory instructions extremely frequently. Avoid redundant global memory accesses. Try to      
+          avoid using thread-local memory by checking if dynamically indexed arrays are declared in local scope, or if  
+          the kernel has excessive register pressure causing spills. If applicable, consider combining multiple         
+          lower-width memory operations into fewer wider memory operations and try interleaving memory operations and   
+          math instructions. This stall type represents about 66.1% of the total average of 20.3 cycles between         
+          issuing two instructions.                                                                                     
+    ----- --------------------------------------------------------------------------------------------------------------
+    INF   Check the Warp Stall Sampling (All Samples) table for the top stall locations in your source based on         
+          sampling data. The Profiling Guide                                                                            
+          (https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#metrics-reference) provides more details    
+          on each stall reason.                                                                                         
+

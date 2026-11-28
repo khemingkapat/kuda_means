@@ -1,0 +1,68 @@
+==PROF== Connected to process 35804 (/content/kuda_means/kuda_means/kuda_means/bin/kuda_means_gpu)
+==PROF== Profiling "assign_v2_kernel" - 0 (1/1): 0%....50%....100% - 13 passes
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=100000 D=32 K=512 iters=1 sse=19695999.3127 kernel_ms=4405.1632 e2e_ms=4409.9541 ms_per_iter=4405.1632
+==PROF== Disconnected from process 35804
+[35804] kuda_means_gpu@127.0.0.1
+  void unnamed>::assign_v2_kernel<1, 1>(const float *, const float *, double *, int *, int *, int, int, int) (391, 1, 1)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 7.5
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         5.50
+    SM Frequency                    Mhz       585.00
+    Elapsed Cycles                cycle    7,452,702
+    Memory Throughput                 %        61.10
+    DRAM Throughput                   %        61.10
+    Duration                         ms        12.74
+    L1/TEX Cache Throughput           %        51.77
+    L2 Cache Throughput               %        48.60
+    SM Active Cycles              cycle 7,983,438.30
+    Compute (SM) Throughput           %        41.57
+    ----------------------- ----------- ------------
+
+    OPT   Memory is more heavily utilized than Compute: Look at the Memory Workload Analysis section to identify the    
+          DRAM bottleneck. Check memory replay (coalescing) metrics to make sure you're efficiently utilizing the       
+          bytes transferred. Also consider whether it is possible to do more work per memory access (kernel fusion) or  
+          whether there are values you can (re)compute.                                                                 
+
+    Section: Memory Workload Analysis
+    -------------------------------------- ----------- ------------
+    Metric Name                            Metric Unit Metric Value
+    -------------------------------------- ----------- ------------
+    Local Memory Spilling Requests                                0
+    Local Memory Spilling Request Overhead           %      no data
+    Memory Throughput                          Gbyte/s       215.22
+    Mem Busy                                         %        48.60
+    Max Bandwidth                                    %        61.10
+    L1/TEX Hit Rate                                  %        18.96
+    L2 Hit Rate                                      %        50.72
+    Mem Pipes Busy                                   %        41.57
+    -------------------------------------- ----------- ------------
+
+    Section: Warp State Statistics
+    ---------------------------------------- ----------- ------------
+    Metric Name                              Metric Unit Metric Value
+    ---------------------------------------- ----------- ------------
+    Warp Cycles Per Issued Instruction             cycle        25.84
+    Warp Cycles Per Executed Instruction           cycle        25.84
+    Avg. Active Threads Per Warp                                   32
+    Avg. Not Predicated Off Threads Per Warp                    31.44
+    ---------------------------------------- ----------- ------------
+
+    WRN   The optional metric smsp__pcsamp_sample_count could not be found. Collecting it as an additional metric could 
+          enable the rule to provide more guidance.                                                                     
+    ----- --------------------------------------------------------------------------------------------------------------
+    OPT   Est. Local Speedup: 34.97%                                                                                    
+          On average, each warp of this workload spends 9.0 cycles being stalled waiting for a scoreboard dependency on 
+          a L1TEX (local, global, surface, texture) operation. Find the instruction producing the data being waited     
+          upon to identify the culprit. To reduce the number of cycles waiting on L1TEX data accesses verify the        
+          memory access patterns are optimal for the target architecture, attempt to increase cache hit rates by        
+          increasing data locality (coalescing), or by changing the cache configuration. Consider moving frequently     
+          used data to shared memory. This stall type represents about 35.0% of the total average of 25.8 cycles        
+          between issuing two instructions.                                                                             
+    ----- --------------------------------------------------------------------------------------------------------------
+    INF   Check the Warp Stall Sampling (All Samples) table for the top stall locations in your source based on         
+          sampling data. The Profiling Guide                                                                            
+          (https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#metrics-reference) provides more details    
+          on each stall reason.                                                                                         
+

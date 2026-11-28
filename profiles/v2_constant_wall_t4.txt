@@ -1,0 +1,12 @@
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=1000000 D=32 K=64 iters=10 sse=169499361.3139 kernel_ms=218.2698 e2e_ms=250.0784 ms_per_iter=21.8270
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=1000000 D=32 K=128 iters=10 sse=181643980.1954 kernel_ms=446.8574 e2e_ms=476.3671 ms_per_iter=44.6857
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=1000000 D=32 K=256 iters=10 sse=155258597.6026 kernel_ms=882.5421 e2e_ms=911.9174 ms_per_iter=88.2542
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=1000000 D=32 K=384 iters=10 sse=157011002.7308 kernel_ms=1288.7840 e2e_ms=1321.8761 ms_per_iter=128.8784
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=1000000 D=32 K=512 iters=10 sse=139773170.7006 kernel_ms=1700.7930 e2e_ms=1730.3360 ms_per_iter=170.0793
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=1000000 D=32 K=513 iters=10 sse=139188243.7035 kernel_ms=758.0021 e2e_ms=788.9628 ms_per_iter=75.8002
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=1000000 D=32 K=640 iters=10 sse=136201082.4912 kernel_ms=941.8905 e2e_ms=971.6491 ms_per_iter=94.1890
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=1000000 D=32 K=1024 iters=10 sse=143815236.0089 kernel_ms=1533.9346 e2e_ms=1564.0445 ms_per_iter=153.3935
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=100000 D=32 K=512 iters=10 sse=12811685.8271 kernel_ms=142.7785 e2e_ms=146.8612 ms_per_iter=14.2778
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
+[kuda_means] version=v2 hw="Tesla T4" commit=3b8202a N=100000 D=32 K=513 iters=10 sse=14756459.2339 kernel_ms=96.4097 e2e_ms=99.9045 ms_per_iter=9.6410
+[verify] status=PASS assignment_mismatches=0 max_centroid_abs_diff=0.000000e+00 sse_rel_diff=0.000000e+00
